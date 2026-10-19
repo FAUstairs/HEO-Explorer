@@ -1,5 +1,8 @@
 # HEO Availability
 
+<img width="1987" height="927" alt="Screenshot from 2026-10-19 10-06-23" src="https://github.com/user-attachments/assets/34cd4fca-f735-4e28-b52b-db42ba9fa1fc" />
+
+
 React/Vite ontology explorer for HEO classes.
 
 ## Starten
