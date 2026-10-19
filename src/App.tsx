@@ -333,7 +333,8 @@ function App() {
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState<string | null>(null)
     const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
-    const [token, setToken] = useState(() => localStorage.getItem('heo-admin-token'))
+    // const [token, setToken] = useState(() => localStorage.getItem('heo-admin-token'))
+    const [token, setToken] = useState(() => "ABC")
     const [loginError, setLoginError] = useState<string | null>(null)
     const [loggingIn, setLoggingIn] = useState(false)
 
