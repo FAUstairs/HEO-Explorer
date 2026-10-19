@@ -1,0 +1,40 @@
+.tbox-page .property-page { padding-top: 42px; }
+.tbox-section { margin-top: 28px; }
+.tbox-section h2 { margin: 0; font-size: 22px; }
+.tbox-class-sections { display: grid; gap: 12px; }
+.tbox-class-section { border: 1px solid #dce3ec; border-radius: 10px; background: white; overflow: hidden; }
+.tbox-class-section header { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; padding: 15px 16px; background: #172c48; color: white; }
+.tbox-class-section h3 { margin: 0; font-size: 16px; }
+.tbox-class-comment { margin: 6px 0 0; color: #d2dce8; font-size: 12px; line-height: 1.5; }
+.tbox-class-section header code { color: #bdcad8; font: 10px 'DM Mono', monospace; overflow-wrap: anywhere; text-align: right; }
+.tbox-property-groups { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; padding: 16px; }
+.tbox-property-groups > div { display: flex; flex-direction: column; gap: 7px; align-items: flex-start; }
+.tbox-property-groups > div > strong { display: block; margin-bottom: 2px; }
+.tbox-group-stack > div { display: flex; flex-direction: column; gap: 7px; align-items: flex-start; }
+.tbox-group-stack { gap: 16px !important; }
+.tbox-property-groups strong { color: #557034; font-size: 12px; }
+.tbox-property-groups code, .tbox-property { font: 11px 'DM Mono', monospace; overflow-wrap: anywhere; }
+.tbox-property-groups .tbox-restriction { color: #8a5a24; }
+.restriction-heading { color: #8a5a24 !important; }
+.tbox-property { color: #718095; }
+.tbox-property b { color: #315a86; font-weight: 500; }
+.tbox-property.datatype-property code { color: #557034; }
+.tbox-property.object-property code, .object-properties-heading { color: #315a86; }
+.tbox-property.object-property code.incoming-property-subject { color: #718095; }
+.tbox-muted { color: #9aa6b4; font-size: 12px; }
+.tbox-class-list, .tbox-triple-list { display: grid; gap: 6px; }
+.tbox-class-list code { display: flex; justify-content: space-between; gap: 16px; border: 1px solid #e1e6ee; border-radius: 7px; background: white; padding: 11px 13px; color: #315a86; font: 12px 'DM Mono', monospace; }
+.tbox-class-list code span { color: #9aa6b4; overflow-wrap: anywhere; text-align: right; }
+.tbox-triple { display: grid; grid-template-columns: minmax(190px, 1fr) minmax(150px, .8fr) minmax(220px, 1.2fr); gap: 12px; align-items: center; border: 1px solid #e1e6ee; border-radius: 7px; background: white; padding: 11px 13px; font-size: 12px; }
+.tbox-triple code { overflow-wrap: anywhere; font: 11px 'DM Mono', monospace; }
+.tbox-triple strong { color: #557034; font: 11px 'DM Mono', monospace; overflow-wrap: anywhere; }
+.tbox-uri { color: #315a86; }
+.tbox-literal { color: #7b5d2b; }
+@media (max-width: 800px) {
+  .tbox-property-groups { grid-template-columns: 1fr; gap: 13px; }
+  .tbox-class-section header { display: block; }
+  .tbox-class-section header code { display: block; margin-top: 6px; text-align: left; }
+  .tbox-class-list code { display: block; }
+  .tbox-class-list code span { display: block; margin-top: 5px; text-align: left; }
+  .tbox-triple { grid-template-columns: 1fr; gap: 6px; }
+}
