@@ -48,7 +48,7 @@ button, input { font: inherit; }
 .diagram-scroll::-webkit-scrollbar { display: none; }
 .diagram-scroll.is-panning { cursor: grabbing; }
 .ontology-diagram { display: block; min-width: 760px; min-height: 300px; overflow: visible; }
-.diagram-edge { fill: none; stroke: #86a4bd; stroke-width: 1.5; opacity: .8; }
+.diagram-edge { fill: none; stroke: #86a4bd; stroke-width: 1.5; opacity: .8; pointer-events: none; }
 .diagram-edge-group { cursor: pointer; }
 .diagram-edge-group.hovered .diagram-edge { stroke: #d3a91a; stroke-width: 3; opacity: 1; }
 .diagram-edge-group.hovered .diagram-edge-label-bg { fill: #ffef9e; stroke: #d3a91a; }

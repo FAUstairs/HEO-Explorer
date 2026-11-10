@@ -95,6 +95,8 @@ export default function Diagram({ endpoint, classes, mode = 'properties', onBack
     const [pan, setPan] = useState({ x: 0, y: 0 })
     const [hoveredEdge, setHoveredEdge] = useState<string | null>(null)
     const [hoveredClass, setHoveredClass] = useState<string | null>(null)
+    const [selectedEdge, setSelectedEdge] = useState<string | null>(null)
+    const [selectedClass, setSelectedClass] = useState<string | null>(null)
     const panStart = useRef<{ pointerX: number; pointerY: number; x: number; y: number } | null>(null)
     const previousMode = useRef(mode)
     const diagramViewport = useRef<HTMLDivElement | null>(null)
@@ -214,6 +216,8 @@ export default function Diagram({ endpoint, classes, mode = 'properties', onBack
         viewStateInitialized.current[mode] = true
         setHoveredEdge(null)
         setHoveredClass(null)
+        setSelectedEdge(null)
+        setSelectedClass(null)
     }, [layout, mode])
     const canvasWidth = layout?.width ?? nodeWidth + padding * 2
     const canvasHeight = layout?.height ?? nodeHeight + padding * 2
@@ -221,6 +225,9 @@ export default function Diagram({ endpoint, classes, mode = 'properties', onBack
         .filter((edge) => edge.domain === classIri && edge.type === 'datatype')
         .map((edge) => edge.label)
         .filter((label, index, labels) => labels.indexOf(label) === index)
+    const activeEdge = selectedEdge ?? hoveredEdge
+    const activeClass = selectedClass ?? hoveredClass
+    const hasSelection = selectedEdge !== null || selectedClass !== null
     const position = (iri: string) => {
         const point = layout?.nodes.get(iri)
         return point ? { ...point, x: point.x + padding, y: point.y + padding } : { x: padding, y: padding, width: nodeWidth, height: nodeHeight }
@@ -302,27 +309,34 @@ export default function Diagram({ endpoint, classes, mode = 'properties', onBack
                         {classes.map((item) => {
                             const point = position(item.iri)
                             const hoveredConnection = visibleEdges.some((edge) => (
-                                edgeId(edge) === hoveredEdge
+                                edgeId(edge) === activeEdge
                                 && (edge.domain === item.iri || edge.range === item.iri)
                             ))
-                            const connectedOutgoing = hoveredClass !== item.iri && visibleEdges.some((edge) => (
-                                edge.domain === hoveredClass && edge.range === item.iri
+                            const connectedOutgoing = activeClass !== item.iri && visibleEdges.some((edge) => (
+                                edge.domain === activeClass && edge.range === item.iri
                             ))
-                            const connectedIncoming = hoveredClass !== item.iri && visibleEdges.some((edge) => (
-                                edge.range === hoveredClass && edge.domain === item.iri
+                            const connectedIncoming = activeClass !== item.iri && visibleEdges.some((edge) => (
+                                edge.range === activeClass && edge.domain === item.iri
                             ))
                             return <g
                                 className={[
                                     'diagram-node',
-                                    hoveredClass === item.iri || hoveredConnection ? 'hovered' : '',
+                                    activeClass === item.iri || hoveredConnection ? 'hovered' : '',
                                     connectedOutgoing ? 'connected-outgoing' : '',
                                     connectedIncoming ? 'connected-incoming' : '',
                                 ].filter(Boolean).join(' ')}
                                 key={item.iri}
                                 transform={`translate(${point.x}, ${point.y})`}
-                                onClick={() => onOpenClass(item.iri)}
-                                onMouseEnter={() => setHoveredClass(item.iri)}
-                                onMouseLeave={() => setHoveredClass(null)}
+                                onPointerDown={(event) => {
+                                    event.stopPropagation()
+                                    event.preventDefault()
+                                    setSelectedClass((current) => current === item.iri ? null : item.iri)
+                                    setSelectedEdge(null)
+                                    setHoveredClass(null)
+                                    setHoveredEdge(null)
+                                }}
+                                onMouseEnter={() => { if (!hasSelection) setHoveredClass(item.iri) }}
+                                onMouseLeave={() => { if (!hasSelection) setHoveredClass(null) }}
                                 role="button"
                                 tabIndex={0}
                             >
@@ -347,24 +361,31 @@ export default function Diagram({ endpoint, classes, mode = 'properties', onBack
                             const labelY = (label?.y ?? points[Math.floor(points.length / 2)].y) + padding
                             const labelWidth = label?.width ?? Math.max(48, edge.label.length * 7)
                             const labelHeight = label?.height ?? 20
-                            const direction = hoveredClass === edge.domain
+                            const direction = activeClass === edge.domain
                                 ? 'outgoing'
-                                : hoveredClass === edge.range
+                                : activeClass === edge.range
                                     ? 'incoming'
                                     : ''
                             return <g
-                                className={['diagram-edge-group', hoveredEdge === id ? 'hovered' : '', direction].filter(Boolean).join(' ')}
+                                className={['diagram-edge-group', activeEdge === id ? 'hovered' : '', direction].filter(Boolean).join(' ')}
                                 key={id}
-                                onMouseEnter={() => setHoveredEdge(id)}
-                                onMouseLeave={() => setHoveredEdge(null)}
+                                onClick={(event) => {
+                                    event.stopPropagation()
+                                    setSelectedEdge((current) => current === id ? null : id)
+                                    setSelectedClass(null)
+                                    setHoveredEdge(null)
+                                    setHoveredClass(null)
+                                }}
+                                onMouseEnter={() => { if (!hasSelection) setHoveredEdge(id) }}
+                                onMouseLeave={() => { if (!hasSelection) setHoveredEdge(null) }}
                             >
                                 <path className="diagram-edge" d={path} markerEnd="url(#diagram-arrow)" />
                                 <g transform={`translate(${labelX}, ${labelY})`}><rect className="diagram-edge-label-bg" x="0" y="0" width={labelWidth} height={labelHeight} rx="10" /><text className="diagram-edge-label" x={labelWidth / 2} y={labelHeight / 2} textAnchor="middle" dominantBaseline="middle">{edge.label}</text></g>
                             </g>
                         })}
                     </svg>
-                    {hoveredClass && literalPredicates(hoveredClass).length > 0 && (() => {
-                        const labels = literalPredicates(hoveredClass)
+                    {activeClass && literalPredicates(activeClass).length > 0 && (() => {
+                        const labels = literalPredicates(activeClass)
                         const tooltipWidth = Math.min(nodeWidth + 80, 320)
                         const tooltipHeight = 28 + labels.length * 19
                         return <div
