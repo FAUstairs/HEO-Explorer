@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
+    "elkjs": "^0.12.1",
     "express": "^5.3.0",
     "jsonwebtoken": "^9.0.3",
     "lucide-react": "^0.468.0",

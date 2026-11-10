@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { AlertCircle, ArrowLeft, CheckCircle2, ChevronLeft, ChevronRight, ExternalLink, LoaderCircle, RefreshCw, Search, XCircle } from 'lucide-react'
 import TBox from './TBox'
+import Diagram from './Diagram'
 
 const QUERY_ENDPOINT = import.meta.env.VITE_QUERY_ENDPOINT ?? 'https://mathhub.info/api/backend/query'
 const ONTOLOGY_QUERY = `
@@ -81,7 +82,7 @@ function sparqlString(value: string): string {
     return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\r?\n/g, '\\n')}"`
 }
 
-function appUrl(view: 'classes' | 'class' | 'instance' | 'tbox' | 'instances', values: Record<string, string> = {}): string {
+function appUrl(view: 'classes' | 'class' | 'instance' | 'tbox' | 'instances' | 'diagram' | 'subclasses', values: Record<string, string> = {}): string {
     const url = new URL(window.location.href)
     const basePath = import.meta.env.BASE_URL.replace(/\/$/, '')
     url.pathname = `${basePath}${view === 'classes' ? '/' : `/${view}`}`
@@ -383,6 +384,8 @@ function App() {
     const [globalInstancesError, setGlobalInstancesError] = useState<string | null>(null)
     const [showGlobalInstances, setShowGlobalInstances] = useState(false)
     const [showTBox, setShowTBox] = useState(false)
+    const [showDiagram, setShowDiagram] = useState(false)
+    const [diagramMode, setDiagramMode] = useState<'properties' | 'subclasses'>('properties')
     const instanceSearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
     const instanceRequestId = useRef(0)
     const globalInstanceSearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -407,7 +410,7 @@ function App() {
     const [loggingIn, setLoggingIn] = useState(false)
     const restoredUrl = useRef(false)
 
-    const navigateTo = useCallback((view: 'classes' | 'class' | 'instance' | 'tbox' | 'instances', values: Record<string, string> = {}) => {
+    const navigateTo = useCallback((view: 'classes' | 'class' | 'instance' | 'tbox' | 'instances' | 'diagram' | 'subclasses', values: Record<string, string> = {}) => {
         window.history.pushState({}, '', appUrl(view, values))
     }, [])
 
@@ -669,11 +672,27 @@ function App() {
 
             if (routePath === '/tbox') {
                 setShowTBox(true)
+                setShowDiagram(false)
+                setShowGlobalInstances(false)
+                return
+            }
+            if (routePath === '/diagram') {
+                setShowTBox(false)
+                setShowDiagram(true)
+                setDiagramMode('properties')
+                setShowGlobalInstances(false)
+                return
+            }
+            if (routePath === '/subclasses') {
+                setShowTBox(false)
+                setShowDiagram(true)
+                setDiagramMode('subclasses')
                 setShowGlobalInstances(false)
                 return
             }
             if (routePath === '/instances') {
                 setShowTBox(false)
+                setShowDiagram(false)
                 setShowGlobalInstances(true)
                 setGlobalInstancePage(0)
                 void loadGlobalInstances(0, globalInstancePageSize, globalInstanceSearch)
@@ -681,6 +700,7 @@ function App() {
             }
             if (routePath !== '/class' && routePath !== '/instance') {
                 setShowTBox(false)
+                setShowDiagram(false)
                 setShowGlobalInstances(false)
                 setSelectedClass(null)
                 setSelectedInstance(null)
@@ -695,6 +715,7 @@ function App() {
                 instanceCount: 0,
             }
             setShowTBox(false)
+            setShowDiagram(false)
             setShowGlobalInstances(false)
             void showProperties(classForView, false).then(() => {
                 if (routePath !== '/instance' || !instanceIri) return
@@ -745,6 +766,23 @@ function App() {
 
     if (showTBox) {
         return <TBox onBack={() => { setShowTBox(false); navigateTo('classes') }} />
+    }
+
+    if (showDiagram) {
+        return <Diagram
+            endpoint={QUERY_ENDPOINT}
+            classes={classes}
+            mode={diagramMode}
+            onBack={() => { setShowDiagram(false); navigateTo('classes') }}
+            onChangeMode={(mode) => {
+                setDiagramMode(mode)
+                navigateTo(mode === 'subclasses' ? 'subclasses' : 'diagram')
+            }}
+            onOpenClass={(classIri) => {
+                setShowDiagram(false)
+                openClassResource(classIri)
+            }}
+        />
     }
 
     if (showGlobalInstances) {
@@ -1036,6 +1074,9 @@ function App() {
             <header className="topbar">
                 <div className="brand"><span className="brand-mark">H</span><span>HEO <strong>Availability</strong></span></div>
                 <div className="header-actions">
+                    <button className="refresh-button" onClick={() => { setShowDiagram(true); setDiagramMode('properties'); navigateTo('diagram') }}>
+                        Diagram
+                    </button>
                     <button className="refresh-button" onClick={() => { setShowTBox(true); navigateTo('tbox') }}>
                         TBox
                     </button>
