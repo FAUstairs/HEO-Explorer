@@ -56,6 +56,9 @@ type HeoInstance = {
 }
 
 type InstanceProperty = {
+    direction: 'outgoing' | 'incoming'
+    subject: string
+    subjectLabel: string
     predicate: string
     object: string
     objectLabel: string
@@ -76,6 +79,15 @@ function localName(iri: string): string {
 
 function sparqlString(value: string): string {
     return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\r?\n/g, '\\n')}"`
+}
+
+function appUrl(view: 'classes' | 'class' | 'instance' | 'tbox' | 'instances', values: Record<string, string> = {}): string {
+    const url = new URL(window.location.href)
+    const basePath = import.meta.env.BASE_URL.replace(/\/$/, '')
+    url.pathname = `${basePath}${view === 'classes' ? '/' : `/${view}`}`
+    url.search = ''
+    Object.entries(values).forEach(([key, value]) => url.searchParams.set(key, value))
+    return `${url.pathname}${url.search}`
 }
 
 function propertyQuery(classIri: string): string {
@@ -187,12 +199,34 @@ function instancePropertyQuery(instanceIri: string): string {
     return `
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 
-SELECT ?predicate ?object (SAMPLE(?objectLabel) AS ?label) WHERE {
+SELECT ?direction ?subject ?subjectLabel ?predicate ?object ?objectLabel WHERE {
+  {
+    BIND("outgoing" AS ?direction)
+    BIND(<${instanceIri}> AS ?subject)
+    <${instanceIri}> ?predicate ?object .
+    OPTIONAL { ?object rdfs:label ?objectLabel . }
+  }
+  UNION
+  {
+    BIND("incoming" AS ?direction)
+    ?subject ?predicate <${instanceIri}> .
+    BIND(<${instanceIri}> AS ?object)
+    OPTIONAL { ?subject rdfs:label ?subjectLabel . }
+  }
+}
+ORDER BY ?direction STR(?predicate) STR(?subject) STR(?object)`
+}
+
+function resourcePreviewQuery(instanceIri: string): string {
+    return `
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+
+SELECT ?predicate ?object ?objectLabel WHERE {
   <${instanceIri}> ?predicate ?object .
   OPTIONAL { ?object rdfs:label ?objectLabel . }
 }
-GROUP BY ?predicate ?object
-ORDER BY STR(?predicate) STR(?object)`
+ORDER BY STR(?predicate) STR(?object)
+LIMIT 30`
 }
 
 function parseRows(payload: unknown): HeoClass[] {
@@ -286,11 +320,40 @@ function parseInstanceProperties(payload: unknown): InstanceProperty[] {
         ?? []
 
     return (rows as ResultRow[]).map((row) => {
+        const direction = valueOf(row.direction) === 'incoming' ? 'incoming' : 'outgoing'
+        const object = row.object
+        return {
+            direction,
+            subject: valueOf(row.subject),
+            subjectLabel: valueOf(row.subjectLabel),
+            predicate: valueOf(row.predicate),
+            object: valueOf(object),
+            objectLabel: valueOf(row.objectLabel),
+            objectIsResource: typeof object !== 'string' && object?.type === 'uri',
+        } satisfies InstanceProperty
+    }).filter((property) => property.predicate && property.object)
+}
+
+type ResourcePreviewProperty = {
+    predicate: string
+    object: string
+    objectLabel: string
+    objectIsResource: boolean
+}
+
+function parseResourcePreview(payload: unknown): ResourcePreviewProperty[] {
+    const rows = Array.isArray(payload)
+        ? payload
+        : (payload as { results?: { bindings?: ResultRow[] }; bindings?: ResultRow[] })?.results?.bindings
+        ?? (payload as { bindings?: ResultRow[] })?.bindings
+        ?? []
+
+    return (rows as ResultRow[]).map((row) => {
         const object = row.object
         return {
             predicate: valueOf(row.predicate),
             object: valueOf(object),
-            objectLabel: valueOf(row.label),
+            objectLabel: valueOf(row.objectLabel),
             objectIsResource: typeof object !== 'string' && object?.type === 'uri',
         }
     }).filter((property) => property.predicate && property.object)
@@ -330,6 +393,11 @@ function App() {
     const [instancePropertiesLoading, setInstancePropertiesLoading] = useState(false)
     const [instancePropertiesError, setInstancePropertiesError] = useState<string | null>(null)
     const [enabledProperties, setEnabledProperties] = useState<Set<string>>(new Set())
+    const [hoveredResource, setHoveredResource] = useState<{ iri: string; label: string } | null>(null)
+    const [resourcePreview, setResourcePreview] = useState<ResourcePreviewProperty[]>([])
+    const [resourcePreviewLoading, setResourcePreviewLoading] = useState(false)
+    const [resourcePreviewError, setResourcePreviewError] = useState<string | null>(null)
+    const resourcePreviewRequestId = useRef(0)
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState<string | null>(null)
     const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
@@ -337,6 +405,11 @@ function App() {
     const [token, setToken] = useState(() => "ABC")
     const [loginError, setLoginError] = useState<string | null>(null)
     const [loggingIn, setLoggingIn] = useState(false)
+    const restoredUrl = useRef(false)
+
+    const navigateTo = useCallback((view: 'classes' | 'class' | 'instance' | 'tbox' | 'instances', values: Record<string, string> = {}) => {
+        window.history.pushState({}, '', appUrl(view, values))
+    }, [])
 
     async function login(event: FormEvent<HTMLFormElement>) {
         event.preventDefault()
@@ -379,7 +452,8 @@ function App() {
         }
     }, [])
 
-    const showProperties = useCallback(async (item: HeoClass) => {
+    const showProperties = useCallback(async (item: HeoClass, updateUrl = true) => {
+        if (updateUrl) navigateTo('class', { iri: item.iri })
         setSelectedClass(item)
         setProperties([])
         setClassParents([])
@@ -424,7 +498,7 @@ function App() {
             setPropertiesLoading(false)
             setInstancesLoading(false)
         }
-    }, [instancePageSize])
+    }, [instancePageSize, navigateTo])
 
     const openClassResource = useCallback((classIri: string) => {
         const classFromList = classes.find((item) => item.iri === classIri)
@@ -510,11 +584,47 @@ function App() {
         }
     }, [])
 
+    const loadResourcePreview = useCallback(async (resource: { iri: string; label: string }) => {
+        const requestId = ++resourcePreviewRequestId.current
+        setHoveredResource(resource)
+        setResourcePreview([])
+        setResourcePreviewError(null)
+        setResourcePreviewLoading(true)
+        try {
+            const response = await fetch(QUERY_ENDPOINT, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+                body: new URLSearchParams({ query: resourcePreviewQuery(resource.iri) }),
+            })
+            if (!response.ok) throw new Error(`The ontology service returned HTTP ${response.status}.`)
+            const nextPreview = parseResourcePreview(await response.json())
+            if (requestId === resourcePreviewRequestId.current) setResourcePreview(nextPreview)
+        } catch (cause) {
+            if (requestId === resourcePreviewRequestId.current) {
+                setResourcePreviewError(cause instanceof Error ? cause.message : 'The resource preview could not be loaded.')
+            }
+        } finally {
+            if (requestId === resourcePreviewRequestId.current) setResourcePreviewLoading(false)
+        }
+    }, [])
+
+    const clearResourcePreview = useCallback(() => {
+        resourcePreviewRequestId.current += 1
+        setHoveredResource(null)
+        setResourcePreview([])
+        setResourcePreviewError(null)
+        setResourcePreviewLoading(false)
+    }, [])
+
     const openInstance = useCallback((instance: HeoInstance) => {
         if (selectedInstance) setInstanceHistory((history) => [...history, selectedInstance])
+        navigateTo('instance', {
+            class: selectedClass?.iri ?? instance.classIri,
+            iri: instance.iri,
+        })
         setSelectedInstance(instance)
         void loadInstanceProperties(instance)
-    }, [loadInstanceProperties, selectedInstance])
+    }, [loadInstanceProperties, navigateTo, selectedClass?.iri, selectedInstance])
 
     const goBackFromInstance = useCallback(() => {
         const previous = instanceHistory[instanceHistory.length - 1]
@@ -524,8 +634,9 @@ function App() {
             void loadInstanceProperties(previous)
         } else {
             setSelectedInstance(null)
+            navigateTo(selectedClass ? 'class' : 'classes', selectedClass ? { iri: selectedClass.iri } : {})
         }
-    }, [instanceHistory, loadInstanceProperties])
+    }, [instanceHistory, loadInstanceProperties, navigateTo, selectedClass])
 
     const openGlobalInstance = useCallback((instance: HeoInstance) => {
         const classFromList = classes.find((item) => item.iri === instance.classIri)
@@ -543,6 +654,69 @@ function App() {
     useEffect(() => {
         if (token) void loadClasses()
     }, [loadClasses, token])
+
+    useEffect(() => {
+        const restoreFromUrl = () => {
+            const url = new URL(window.location.href)
+            const basePath = import.meta.env.BASE_URL.replace(/\/$/, '')
+            const routePath = url.pathname.startsWith(`${basePath}/`)
+                ? url.pathname.slice(basePath.length)
+                : url.pathname
+            const classIri = routePath === '/instance'
+                ? url.searchParams.get('class')
+                : url.searchParams.get('iri')
+            const instanceIri = url.searchParams.get('instance') || (routePath === '/instance' ? url.searchParams.get('iri') : null)
+
+            if (routePath === '/tbox') {
+                setShowTBox(true)
+                setShowGlobalInstances(false)
+                return
+            }
+            if (routePath === '/instances') {
+                setShowTBox(false)
+                setShowGlobalInstances(true)
+                setGlobalInstancePage(0)
+                void loadGlobalInstances(0, globalInstancePageSize, globalInstanceSearch)
+                return
+            }
+            if (routePath !== '/class' && routePath !== '/instance') {
+                setShowTBox(false)
+                setShowGlobalInstances(false)
+                setSelectedClass(null)
+                setSelectedInstance(null)
+                return
+            }
+            if (!classIri || classes.length === 0) return
+
+            const classForView = classes.find((item) => item.iri === classIri) ?? {
+                iri: classIri,
+                notation: localName(classIri),
+                localName: localName(classIri),
+                instanceCount: 0,
+            }
+            setShowTBox(false)
+            setShowGlobalInstances(false)
+            void showProperties(classForView, false).then(() => {
+                if (routePath !== '/instance' || !instanceIri) return
+                const instance: HeoInstance = {
+                    iri: instanceIri,
+                    label: localName(instanceIri),
+                    classIri: classForView.iri,
+                    dataProperties: [],
+                }
+                setSelectedInstance(instance)
+                void loadInstanceProperties(instance)
+            })
+        }
+
+        if (!restoredUrl.current && classes.length > 0) {
+            restoredUrl.current = true
+            restoreFromUrl()
+        }
+
+        window.addEventListener('popstate', restoreFromUrl)
+        return () => window.removeEventListener('popstate', restoreFromUrl)
+    }, [classes, globalInstancePageSize, globalInstanceSearch, loadGlobalInstances, loadInstanceProperties, showProperties])
 
     const filteredClasses = useMemo(() => {
         const normalized = search.trim().toLocaleLowerCase('de')
@@ -570,7 +744,7 @@ function App() {
     }
 
     if (showTBox) {
-        return <TBox onBack={() => setShowTBox(false)} />
+        return <TBox onBack={() => { setShowTBox(false); navigateTo('classes') }} />
     }
 
     if (showGlobalInstances) {
@@ -578,10 +752,10 @@ function App() {
             <main className="shell">
                 <header className="topbar">
                     <div className="brand"><span className="brand-mark">H</span><span>HEO <strong>Availability</strong></span></div>
-                    <button className="refresh-button" onClick={() => setShowGlobalInstances(false)}><ArrowLeft size={16} /> Back to classes</button>
+                    <button className="refresh-button" onClick={() => { setShowGlobalInstances(false); navigateTo('classes') }}><ArrowLeft size={16} /> Back to classes</button>
                 </header>
                 <section className="property-page">
-                    <button className="back-link" onClick={() => setShowGlobalInstances(false)}><ArrowLeft size={16} /> Back to all classes</button>
+                    <button className="back-link" onClick={() => { setShowGlobalInstances(false); navigateTo('classes') }}><ArrowLeft size={16} /> Back to all classes</button>
                     <p className="eyebrow">ABox explorer</p>
                     <h1>All instances</h1>
                     <p className="intro">Search data property values across all HEO classes.</p>
@@ -649,6 +823,11 @@ function App() {
     if (selectedClass && selectedInstance) {
         const visibleProperties = instanceProperties.filter((property) => enabledProperties.has(property.predicate))
         const propertyName = (iri: string) => properties.find((property) => property.iri === iri)?.label || localName(iri)
+        const incomingPredicates = new Set(
+            instanceProperties
+                .filter((property) => property.direction === 'incoming')
+                .map((property) => property.predicate),
+        )
         return (
             <main className="shell">
                 <header className="topbar">
@@ -664,7 +843,11 @@ function App() {
                         <div><p className="eyebrow">Predicate filters</p><h2>Displayed properties</h2></div>
                         <div className="predicate-toggles">
                             {[...new Set([...properties.map((property) => property.iri), ...instanceProperties.map((property) => property.predicate)])].map((predicate) => (
-                                <button key={predicate} className={enabledProperties.has(predicate) ? 'predicate-toggle active' : 'predicate-toggle'} onClick={() => setEnabledProperties((current) => {
+                                <button key={predicate} className={[
+                                    'predicate-toggle',
+                                    incomingPredicates.has(predicate) ? 'incoming' : '',
+                                    enabledProperties.has(predicate) ? 'active' : '',
+                                ].filter(Boolean).join(' ')} onClick={() => setEnabledProperties((current) => {
                                     const next = new Set(current)
                                     if (next.has(predicate)) next.delete(predicate); else next.add(predicate)
                                     return next
@@ -676,20 +859,58 @@ function App() {
                     {instancePropertiesLoading && <div className="loading"><LoaderCircle className="spin" size={28} /><span>Loading instance data …</span></div>}
                     {!instancePropertiesLoading && !instancePropertiesError && visibleProperties.length === 0 && <div className="empty"><Search size={30} /><strong>No properties selected</strong><span>Enable a predicate above to display its value.</span></div>}
                     {!instancePropertiesLoading && !instancePropertiesError && visibleProperties.length > 0 && <div className="instance-data-list">
-                        {visibleProperties.map((property) => <div className="instance-data-row" key={`${property.predicate}|${property.object}`}>
-                            <span className="instance-predicate">{propertyName(property.predicate)}</span>
-                            {property.objectIsResource
-                                ? <button className="resource-link" onClick={() => {
-                                    if (property.predicate === 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type'
-                                        && isHeoIri(property.object)) {
-                                        openClassResource(property.object)
-                                    } else {
-                                        openInstance({ iri: property.object, label: property.objectLabel || localName(property.object), classIri: '', dataProperties: [] })
-                                    }
-                                }}>{property.objectLabel || localName(property.object)} <ExternalLink size={13} /></button>
+                        {visibleProperties.map((property) => {
+                            const relatedResource = property.direction === 'incoming' ? property.subject : property.object
+                            const relatedLabel = property.direction === 'incoming'
+                                ? property.subjectLabel || localName(property.subject)
+                                : property.objectLabel || localName(property.object)
+                            const relatedIsResource = property.direction === 'incoming' || property.objectIsResource
+                            const showResourcePreview = relatedIsResource
+                            return (
+                                <div className={`instance-data-row ${property.direction}`} key={`${property.direction}|${property.subject}|${property.predicate}|${property.object}`}>
+                                    <span className="instance-predicate">{propertyName(property.predicate)}</span>
+                                    {relatedIsResource
+                                ? <span
+                                    className="resource-preview-anchor"
+                                    onMouseEnter={showResourcePreview ? () => void loadResourcePreview({ iri: relatedResource, label: relatedLabel }) : undefined}
+                                    onMouseLeave={showResourcePreview ? clearResourcePreview : undefined}
+                                >
+                                    <button className="resource-link" onClick={() => {
+                                        if (property.direction === 'outgoing'
+                                            && property.predicate === 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type'
+                                            && isHeoIri(property.object)) {
+                                            openClassResource(property.object)
+                                        } else {
+                                            openInstance({
+                                                iri: relatedResource,
+                                                label: relatedLabel,
+                                                classIri: '',
+                                                dataProperties: [],
+                                            })
+                                        }
+                                    }}>{relatedLabel} <ExternalLink size={13} /></button>
+                                    {showResourcePreview && hoveredResource?.iri === relatedResource && <div className="resource-preview" role="status">
+                                        <strong>{hoveredResource.label}</strong>
+                                        <code title={hoveredResource.iri}>{hoveredResource.iri}</code>
+                                        {resourcePreviewLoading && <span className="resource-preview-status">Loading …</span>}
+                                        {resourcePreviewError && <span className="resource-preview-error">{resourcePreviewError}</span>}
+                                        {!resourcePreviewLoading && !resourcePreviewError && resourcePreview.length === 0 && <span className="resource-preview-status">No outgoing properties.</span>}
+                                        {!resourcePreviewLoading && !resourcePreviewError && resourcePreview.length > 0 && <div className="resource-preview-list">
+                                            {resourcePreview.map((previewProperty, index) => {
+                                                const previewValue = previewProperty.objectLabel || (previewProperty.objectIsResource ? localName(previewProperty.object) : previewProperty.object)
+                                                return <div className="resource-preview-row" key={`${previewProperty.predicate}|${previewProperty.object}|${index}`}>
+                                                    <span>{propertyName(previewProperty.predicate)}</span>
+                                                    <strong title={previewProperty.object}>{previewValue}</strong>
+                                                </div>
+                                            })}
+                                        </div>}
+                                    </div>}
+                                </span>
                                 : <span className="literal-value">{property.object}</span>}
-                            <code title={property.predicate}>{property.predicate}</code>
-                        </div>)}
+                                    <code title={property.predicate}>{property.predicate}</code>
+                                </div>
+                            )
+                        })}
                     </div>}
                 </section>
                 <footer>{lastUpdated ? `Last updated: ${lastUpdated.toLocaleTimeString('en-GB')}` : 'Connecting to the triple store …'}</footer>
@@ -702,12 +923,12 @@ function App() {
             <main className="shell">
                 <header className="topbar">
                     <div className="brand"><span className="brand-mark">H</span><span>HEO <strong>Availability</strong></span></div>
-                    <button className="refresh-button" onClick={() => setSelectedClass(null)}>
+                    <button className="refresh-button" onClick={() => { setSelectedClass(null); navigateTo('classes') }}>
                         <ArrowLeft size={16} /> Back to classes
                     </button>
                 </header>
                 <section className="property-page">
-                    <button className="back-link" onClick={() => setSelectedClass(null)}>
+                    <button className="back-link" onClick={() => { setSelectedClass(null); navigateTo('classes') }}>
                         <ArrowLeft size={16} /> Back to all classes
                     </button>
                     <p className="eyebrow">TBox properties</p>
@@ -815,10 +1036,10 @@ function App() {
             <header className="topbar">
                 <div className="brand"><span className="brand-mark">H</span><span>HEO <strong>Availability</strong></span></div>
                 <div className="header-actions">
-                    <button className="refresh-button" onClick={() => setShowTBox(true)}>
+                    <button className="refresh-button" onClick={() => { setShowTBox(true); navigateTo('tbox') }}>
                         TBox
                     </button>
-                    <button className="refresh-button" onClick={() => { setShowGlobalInstances(true); setGlobalInstancePage(0); void loadGlobalInstances(0, globalInstancePageSize, globalInstanceSearch) }}>
+                    <button className="refresh-button" onClick={() => { setShowGlobalInstances(true); setGlobalInstancePage(0); navigateTo('instances'); void loadGlobalInstances(0, globalInstancePageSize, globalInstanceSearch) }}>
                         <Search size={16} /> Search all instances
                     </button>
                     <button className="refresh-button" onClick={() => void loadClasses()} disabled={loading}>
