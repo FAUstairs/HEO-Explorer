@@ -89,6 +89,7 @@ function parseEdges(payload: unknown, mode: 'properties' | 'subclasses'): Diagra
 
 export default function Diagram({ endpoint, classes, mode = 'properties', onBack, onOpenClass, onChangeMode }: DiagramProps) {
     const [edges, setEdges] = useState<DiagramEdge[]>([])
+    const [literalEdges, setLiteralEdges] = useState<DiagramEdge[]>([])
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState<string | null>(null)
     const [zoom, setZoom] = useState(1)
@@ -113,13 +114,27 @@ export default function Diagram({ endpoint, classes, mode = 'properties', onBack
         setLoading(true)
         setError(null)
         try {
-            const response = await fetch(endpoint, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-                body: new URLSearchParams({ query: mode === 'subclasses' ? subclassQuery : propertyQuery }),
-            })
-            if (!response.ok) throw new Error(`The ontology service returned HTTP ${response.status}.`)
-            setEdges(parseEdges(await response.json(), mode))
+            const requests = [
+                fetch(endpoint, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+                    body: new URLSearchParams({ query: mode === 'subclasses' ? subclassQuery : propertyQuery }),
+                }),
+            ]
+            if (mode === 'subclasses') {
+                requests.push(fetch(endpoint, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+                    body: new URLSearchParams({ query: propertyQuery }),
+                }))
+            }
+            const responses = await Promise.all(requests)
+            if (responses.some((response) => !response.ok)) {
+                throw new Error('The ontology service could not load the diagram data.')
+            }
+            const payloads = await Promise.all(responses.map((response) => response.json()))
+            setEdges(parseEdges(payloads[0], mode))
+            setLiteralEdges(mode === 'subclasses' ? parseEdges(payloads[1], 'properties') : parseEdges(payloads[0], 'properties'))
         } catch (cause) {
             setError(cause instanceof Error ? cause.message : 'The diagram could not be loaded.')
         } finally {
@@ -221,7 +236,8 @@ export default function Diagram({ endpoint, classes, mode = 'properties', onBack
     }, [layout, mode])
     const canvasWidth = layout?.width ?? nodeWidth + padding * 2
     const canvasHeight = layout?.height ?? nodeHeight + padding * 2
-    const literalPredicates = (classIri: string) => domainEdges
+    const literalPredicates = (classIri: string) => literalEdges
+        .filter((edge) => classMap.has(edge.domain))
         .filter((edge) => edge.domain === classIri && edge.type === 'datatype')
         .map((edge) => edge.label)
         .filter((label, index, labels) => labels.indexOf(label) === index)
