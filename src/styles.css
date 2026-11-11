@@ -73,7 +73,11 @@ button, input { font: inherit; }
 .diagram-node.connected-outgoing circle { fill: #83b544; }
 .diagram-node.connected-incoming rect { fill: #dff4fc; stroke: #8bc9e1; stroke-width: 2; }
 .diagram-node.connected-incoming circle { fill: #65b3d3; }
-.diagram-literal-tooltip { position: absolute; z-index: 3; top: 12px; left: 12px; display: grid; gap: 5px; pointer-events: none; padding: 9px 11px; border: 1px solid #eadb8acc; border-radius: 8px; background: #fff8d8e6; box-shadow: 0 4px 8px #806b2214; color: #806b22; overflow: hidden; }
+.diagram-literal-tooltip { position: absolute; z-index: 3; top: 12px; left: 12px; display: grid; gap: 9px; pointer-events: none; padding: 9px 11px; border: 1px solid #eadb8acc; border-radius: 8px; background: #fff8d8e6; box-shadow: 0 4px 8px #806b2214; color: #806b22; overflow: hidden; }
+.diagram-comment-section, .diagram-literal-section { display: grid; gap: 5px; min-width: 0; }
+.diagram-literal-section { padding-top: 8px; border-top: 1px solid #eadb8a99; }
+.diagram-comment { margin: 0; color: #806b22; font: 9px/1.45 Manrope, sans-serif; overflow-wrap: anywhere; }
+.diagram-predicate-tooltip { position: absolute; z-index: 3; top: 12px; left: 12px; display: grid; gap: 5px; width: min(320px, calc(100% - 24px)); pointer-events: none; padding: 9px 11px; border: 1px solid #eadb8acc; border-radius: 8px; background: #fff8d8e6; box-shadow: 0 4px 8px #806b2214; color: #806b22; overflow: hidden; }
 .diagram-literal-title { color: #806b22; font: 700 9px Manrope, sans-serif; }
 .diagram-literal-item { overflow: hidden; color: #806b22; text-overflow: ellipsis; white-space: nowrap; font: 9px 'DM Mono', monospace; }
 .hero { display: flex; justify-content: space-between; align-items: end; padding: 70px 0 43px; }

@@ -755,7 +755,7 @@ function App() {
 
     if (!token) {
         return <main className="login-page"><form className="login-card" onSubmit={login}>
-            <div className="brand"><span className="brand-mark">H</span><span>HEO <strong>Availability</strong></span></div>
+            <div className="brand"><span className="brand-mark">H</span><span>HEO <strong>Explorer</strong></span></div>
             <p className="eyebrow">Admin access</p><h1>Sign in</h1>
             <label>Username<input name="username" defaultValue="admin" autoComplete="username" required /></label>
             <label>Password<input name="password" type="password" defaultValue="admin" autoComplete="current-password" required /></label>
@@ -789,7 +789,7 @@ function App() {
         return (
             <main className="shell">
                 <header className="topbar">
-                    <div className="brand"><span className="brand-mark">H</span><span>HEO <strong>Availability</strong></span></div>
+                    <div className="brand"><span className="brand-mark">H</span><span>HEO <strong>Explorer</strong></span></div>
                     <button className="refresh-button" onClick={() => { setShowGlobalInstances(false); navigateTo('classes') }}><ArrowLeft size={16} /> Back to classes</button>
                 </header>
                 <section className="property-page">
@@ -869,7 +869,7 @@ function App() {
         return (
             <main className="shell">
                 <header className="topbar">
-                    <div className="brand"><span className="brand-mark">H</span><span>HEO <strong>Availability</strong></span></div>
+                    <div className="brand"><span className="brand-mark">H</span><span>HEO <strong>Explorer</strong></span></div>
                     <button className="refresh-button" onClick={goBackFromInstance}><ArrowLeft size={16} /> Back</button>
                 </header>
                 <section className="property-page">
@@ -960,7 +960,7 @@ function App() {
         return (
             <main className="shell">
                 <header className="topbar">
-                    <div className="brand"><span className="brand-mark">H</span><span>HEO <strong>Availability</strong></span></div>
+                    <div className="brand"><span className="brand-mark">H</span><span>HEO <strong>Explorer</strong></span></div>
                     <button className="refresh-button" onClick={() => { setSelectedClass(null); navigateTo('classes') }}>
                         <ArrowLeft size={16} /> Back to classes
                     </button>
@@ -1072,7 +1072,7 @@ function App() {
     return (
         <main className="shell">
             <header className="topbar">
-                <div className="brand"><span className="brand-mark">H</span><span>HEO <strong>Availability</strong></span></div>
+                <div className="brand"><span className="brand-mark">H</span><span>HEO <strong>Explorer</strong></span></div>
                 <div className="header-actions">
                     <button className="refresh-button" onClick={() => { setShowDiagram(true); setDiagramMode('properties'); navigateTo('diagram') }}>
                         Diagram

@@ -10,6 +10,7 @@ type ResultRow = Record<string, Binding | string | null | undefined>
 type DiagramEdge = {
     property: string
     label: string
+    comment: string
     domain: string
     range: string
     type: 'datatype' | 'object'
@@ -34,12 +35,13 @@ PREFIX heo: <https://mathhub.info/heo#>
 PREFIX owl: <http://www.w3.org/2002/07/owl#>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 
-SELECT DISTINCT ?property ?propertyLabel ?propertyType ?domain ?range WHERE {
+SELECT DISTINCT ?property ?propertyLabel ?propertyComment ?propertyType ?domain ?range WHERE {
   ?property a ?propertyType ;
             rdfs:domain ?domain .
   VALUES ?propertyType { owl:DatatypeProperty owl:ObjectProperty }
   FILTER(STRSTARTS(STR(?domain), STR(heo:)))
   OPTIONAL { ?property rdfs:label ?propertyLabel . }
+  OPTIONAL { ?property rdfs:comment ?propertyComment . }
   OPTIONAL { ?property rdfs:range ?range . }
 }
 ORDER BY STR(?domain) STR(?property)`
@@ -48,10 +50,11 @@ const subclassQuery = `
 PREFIX heo: <https://mathhub.info/heo#>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 
-SELECT DISTINCT ?domain ?range WHERE {
+SELECT DISTINCT ?domain ?range ?propertyComment WHERE {
   ?domain rdfs:subClassOf ?range .
   FILTER(STRSTARTS(STR(?domain), STR(heo:)))
   FILTER(STRSTARTS(STR(?range), STR(heo:)))
+  OPTIONAL { <http://www.w3.org/2000/01/rdf-schema#subClassOf> rdfs:comment ?propertyComment . }
 }
 ORDER BY STR(?range) STR(?domain)`
 
@@ -77,6 +80,7 @@ function parseEdges(payload: unknown, mode: 'properties' | 'subclasses'): Diagra
         unique.set(`${property}|${domain}|${valueOf(row.range)}`, {
             property,
             label: mode === 'subclasses' ? 'subclass of' : valueOf(row.propertyLabel) || localName(property),
+            comment: valueOf(row.propertyComment).trim(),
             domain,
             range: valueOf(row.range),
             type: mode === 'subclasses'
@@ -243,6 +247,9 @@ export default function Diagram({ endpoint, classes, mode = 'properties', onBack
         .filter((label, index, labels) => labels.indexOf(label) === index)
     const activeEdge = selectedEdge ?? hoveredEdge
     const activeClass = selectedClass ?? hoveredClass
+    const activeEdgeComment = activeEdge
+        ? visibleEdges.find((edge) => edgeId(edge) === activeEdge)?.comment ?? ''
+        : ''
     const hasSelection = selectedEdge !== null || selectedClass !== null
     const position = (iri: string) => {
         const point = layout?.nodes.get(iri)
@@ -252,7 +259,7 @@ export default function Diagram({ endpoint, classes, mode = 'properties', onBack
     return (
         <main className="shell diagram-shell">
             <header className="topbar">
-                <div className="brand"><span className="brand-mark">H</span><span>HEO <strong>Availability</strong></span></div>
+                <div className="brand"><span className="brand-mark">H</span><span>HEO <strong>Explorer</strong></span></div>
                 <button className="refresh-button" onClick={onBack}><ArrowLeft size={16} /> Back to classes</button>
             </header>
             <section className="property-page diagram-page">
@@ -400,10 +407,11 @@ export default function Diagram({ endpoint, classes, mode = 'properties', onBack
                             </g>
                         })}
                     </svg>
-                    {activeClass && literalPredicates(activeClass).length > 0 && (() => {
+                    {activeClass && (classMap.get(activeClass)?.description || literalPredicates(activeClass).length > 0) && (() => {
+                        const comment = classMap.get(activeClass)?.description?.trim() ?? ''
                         const labels = literalPredicates(activeClass)
                         const tooltipWidth = Math.min(nodeWidth + 80, 320)
-                        const tooltipHeight = 28 + labels.length * 19
+                        const tooltipHeight = 28 + (comment ? 54 : 0) + (labels.length ? 28 + labels.length * 19 : 0)
                         return <div
                             className="diagram-literal-tooltip"
                             style={{
@@ -411,10 +419,20 @@ export default function Diagram({ endpoint, classes, mode = 'properties', onBack
                                 minHeight: `${tooltipHeight}px`,
                             }}
                         >
-                            <strong className="diagram-literal-title">Literal predicates</strong>
-                            {labels.map((label) => <span className="diagram-literal-item" key={label}>{label}</span>)}
+                            {comment && <section className="diagram-comment-section">
+                                <strong className="diagram-literal-title">Comment</strong>
+                                <p className="diagram-comment">{comment}</p>
+                            </section>}
+                            {labels.length > 0 && <section className="diagram-literal-section">
+                                <strong className="diagram-literal-title">Literal predicates</strong>
+                                {labels.map((label) => <span className="diagram-literal-item" key={label}>{label}</span>)}
+                            </section>}
                         </div>
                     })()}
+                    {activeEdgeComment && <div className="diagram-predicate-tooltip">
+                        <strong className="diagram-literal-title">Comment</strong>
+                        <p className="diagram-comment">{activeEdgeComment}</p>
+                    </div>}
                     </div>
                 </div>}
             </section>
