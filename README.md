@@ -14,7 +14,7 @@ separately:
 
 ```bash
 export DATABASE_URL='postgresql://postgres:postgres@localhost:5432/heo'
-export JWT_SECRET='...'
+export JWT_SECRET="$(openssl rand -base64 48)"
 export INITIAL_ADMIN_USERNAME=admin
 export INITIAL_ADMIN_PASSWORD='admin'
 npm run dev:server
