@@ -4,6 +4,18 @@ import TBox from './TBox'
 import Diagram from './Diagram'
 
 const QUERY_ENDPOINT = import.meta.env.VITE_QUERY_ENDPOINT ?? 'https://mathhub.info/api/backend/query'
+const EXAMPLE_SPARQL_QUERY = `PREFIX heo: <https://mathhub.info/heo#>
+
+SELECT DISTINCT ?personName ?moduleName WHERE {
+  ?resource a heo:Module ;
+            heo:coordinatedBy ?person ;
+            heo:moduleName ?moduleName .
+  ?person heo:hasFirstName ?firstName ;
+          heo:hasLastName ?lastName .
+  FILTER(CONTAINS(LCASE(STR(?moduleName)), "artificial intelligence"))
+  BIND(CONCAT(STR(?firstName), " ", STR(?lastName)) AS ?personName)
+}
+ORDER BY LCASE(STR(?personName))`
 const ONTOLOGY_QUERY = `
 PREFIX heo: <https://mathhub.info/heo#>
 PREFIX owl: <http://www.w3.org/2002/07/owl#>
@@ -66,6 +78,25 @@ type InstanceProperty = {
     objectIsResource: boolean
 }
 
+function JsonValue({ name, value, depth = 0 }: { name?: string; value: unknown; depth?: number }) {
+    const isObject = typeof value === 'object' && value !== null
+    if (!isObject) {
+        return <div className="json-entry"><span className="json-key">{name !== undefined ? `${name}: ` : ''}</span><span className={`json-value json-${typeof value}`}>{JSON.stringify(value)}</span></div>
+    }
+
+    const entries = Array.isArray(value)
+        ? value.map((item, index) => [String(index), item] as const)
+        : Object.entries(value as Record<string, unknown>)
+    return (
+        <details className="json-node" open>
+            <summary><span className="json-key">{name ?? (Array.isArray(value) ? 'Array' : 'Object')}</span><span className="json-type">{Array.isArray(value) ? `[${entries.length}]` : `{${entries.length}}`}</span></summary>
+            <div className="json-children">
+                {entries.map(([key, child]) => <JsonValue key={key} name={Array.isArray(value) ? `[${key}]` : key} value={child} depth={depth + 1} />)}
+            </div>
+        </details>
+    )
+}
+
 function valueOf(value: Binding | string | null | undefined): string {
     return typeof value === 'string' ? value : value?.value ?? ''
 }
@@ -82,7 +113,7 @@ function sparqlString(value: string): string {
     return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\r?\n/g, '\\n')}"`
 }
 
-function appUrl(view: 'classes' | 'class' | 'instance' | 'tbox' | 'instances' | 'diagram' | 'subclasses', values: Record<string, string> = {}): string {
+function appUrl(view: 'classes' | 'class' | 'instance' | 'tbox' | 'instances' | 'diagram' | 'subclasses' | 'sparql', values: Record<string, string> = {}): string {
     const url = new URL(window.location.href)
     const basePath = import.meta.env.BASE_URL.replace(/\/$/, '')
     url.pathname = `${basePath}${view === 'classes' ? '/' : `/${view}`}`
@@ -385,6 +416,11 @@ function App() {
     const [showGlobalInstances, setShowGlobalInstances] = useState(false)
     const [showTBox, setShowTBox] = useState(false)
     const [showDiagram, setShowDiagram] = useState(false)
+    const [showSparql, setShowSparql] = useState(false)
+    const [sparqlQuery, setSparqlQuery] = useState(EXAMPLE_SPARQL_QUERY)
+    const [sparqlResult, setSparqlResult] = useState<unknown>(null)
+    const [sparqlLoading, setSparqlLoading] = useState(false)
+    const [sparqlError, setSparqlError] = useState<string | null>(null)
     const [diagramMode, setDiagramMode] = useState<'properties' | 'subclasses'>('properties')
     const instanceSearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
     const instanceRequestId = useRef(0)
@@ -410,7 +446,7 @@ function App() {
     const [loggingIn, setLoggingIn] = useState(false)
     const restoredUrl = useRef(false)
 
-    const navigateTo = useCallback((view: 'classes' | 'class' | 'instance' | 'tbox' | 'instances' | 'diagram' | 'subclasses', values: Record<string, string> = {}) => {
+    const navigateTo = useCallback((view: 'classes' | 'class' | 'instance' | 'tbox' | 'instances' | 'diagram' | 'subclasses' | 'sparql', values: Record<string, string> = {}) => {
         window.history.pushState({}, '', appUrl(view, values))
     }, [])
 
@@ -673,12 +709,21 @@ function App() {
             if (routePath === '/tbox') {
                 setShowTBox(true)
                 setShowDiagram(false)
+                setShowSparql(false)
+                setShowGlobalInstances(false)
+                return
+            }
+            if (routePath === '/sparql') {
+                setShowTBox(false)
+                setShowDiagram(false)
+                setShowSparql(true)
                 setShowGlobalInstances(false)
                 return
             }
             if (routePath === '/diagram') {
                 setShowTBox(false)
                 setShowDiagram(true)
+                setShowSparql(false)
                 setDiagramMode('properties')
                 setShowGlobalInstances(false)
                 return
@@ -686,6 +731,7 @@ function App() {
             if (routePath === '/subclasses') {
                 setShowTBox(false)
                 setShowDiagram(true)
+                setShowSparql(false)
                 setDiagramMode('subclasses')
                 setShowGlobalInstances(false)
                 return
@@ -693,6 +739,7 @@ function App() {
             if (routePath === '/instances') {
                 setShowTBox(false)
                 setShowDiagram(false)
+                setShowSparql(false)
                 setShowGlobalInstances(true)
                 setGlobalInstancePage(0)
                 void loadGlobalInstances(0, globalInstancePageSize, globalInstanceSearch)
@@ -701,6 +748,7 @@ function App() {
             if (routePath !== '/class' && routePath !== '/instance') {
                 setShowTBox(false)
                 setShowDiagram(false)
+                setShowSparql(false)
                 setShowGlobalInstances(false)
                 setSelectedClass(null)
                 setSelectedInstance(null)
@@ -762,6 +810,58 @@ function App() {
             {loginError && <p className="login-error">{loginError}</p>}
             <button type="submit" disabled={loggingIn}>{loggingIn ? 'Signing in …' : 'Sign in'}</button>
         </form></main>
+    }
+
+    async function executeSparql(event: FormEvent<HTMLFormElement>) {
+        event.preventDefault()
+        setSparqlLoading(true)
+        setSparqlError(null)
+        setSparqlResult(null)
+        try {
+            const query = sparqlQuery.trim()
+            if (!query) throw new Error('Please enter a SPARQL query.')
+            const response = await fetch(QUERY_ENDPOINT, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+                body: new URLSearchParams({ query }),
+            })
+            if (!response.ok) throw new Error(`The SPARQL endpoint responded with HTTP ${response.status}.`)
+            setSparqlResult(await response.json())
+        } catch (cause) {
+            setSparqlError(cause instanceof Error ? cause.message : 'The SPARQL query could not be executed.')
+        } finally {
+            setSparqlLoading(false)
+        }
+    }
+
+    if (showSparql) {
+        return (
+            <main className="shell">
+                <header className="topbar">
+                    <div className="brand"><span className="brand-mark">H</span><span>HEO <strong>Explorer</strong></span></div>
+                    <button className="refresh-button" onClick={() => { setShowSparql(false); navigateTo('classes') }}><ArrowLeft size={16} /> Back to classes</button>
+                </header>
+                <section className="property-page sparql-page">
+                    <button className="back-link" onClick={() => { setShowSparql(false); navigateTo('classes') }}><ArrowLeft size={16} /> Back to all classes</button>
+                    <p className="eyebrow">Query console</p>
+                    <h1>SPARQL</h1>
+                    <p className="intro">Run read-only queries against the HEO triple store and inspect the JSON response.</p>
+                    <form className="sparql-form" onSubmit={executeSparql}>
+                        <label htmlFor="sparql-query">Query</label>
+                        <textarea id="sparql-query" value={sparqlQuery} onChange={(event) => setSparqlQuery(event.target.value)} spellCheck={false} rows={14} />
+                        <button className="refresh-button sparql-run-button" type="submit" disabled={sparqlLoading}>
+                            {sparqlLoading ? <LoaderCircle className="spin" size={16} /> : null}
+                            {sparqlLoading ? 'Running …' : 'Run query'}
+                        </button>
+                    </form>
+                    {sparqlError && <div className="notice error"><AlertCircle size={20} /><div><strong>Query failed</strong><p>{sparqlError}</p></div></div>}
+                    {sparqlResult !== null && <section className="sparql-results">
+                        <div className="instances-heading"><div><p className="eyebrow">Response</p><h2>JSON result</h2></div></div>
+                        <div className="json-viewer"><JsonValue value={sparqlResult} /></div>
+                    </section>}
+                </section>
+            </main>
+        )
     }
 
     if (showTBox) {
@@ -1076,6 +1176,9 @@ function App() {
                 <div className="header-actions">
                     <button className="refresh-button" onClick={() => { setShowDiagram(true); setDiagramMode('properties'); navigateTo('diagram') }}>
                         Diagram
+                    </button>
+                    <button className="refresh-button" onClick={() => { setShowSparql(true); navigateTo('sparql') }}>
+                        SPARQL
                     </button>
                     <button className="refresh-button" onClick={() => { setShowTBox(true); navigateTo('tbox') }}>
                         TBox
