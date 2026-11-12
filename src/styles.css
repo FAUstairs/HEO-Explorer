@@ -190,6 +190,7 @@ footer { color: #9ca8b6; font: 10px 'DM Mono', monospace; text-align: right; mar
 .instance-data-row code { min-width: 0; overflow: hidden; color: #8b98a9; text-overflow: ellipsis; white-space: nowrap; font: 10px 'DM Mono', monospace; }
 .literal-value { color: #4b586b; overflow-wrap: anywhere; }
 .resource-preview-anchor { position: relative; display: inline-flex; min-width: 0; }
+.resource-preview-anchor::after { position: absolute; z-index: 9; top: 100%; left: 0; width: min(440px, 70vw); height: 9px; content: ''; }
 .resource-link { display: inline-flex; align-items: center; gap: 5px; min-width: 0; max-width: 100%; border: 0; background: none; color: #315f8c; padding: 0; text-align: left; cursor: pointer; font-weight: 600; overflow-wrap: anywhere; }
 .resource-link:hover { color: #557034; text-decoration: underline; }
 .resource-preview { position: absolute; z-index: 10; top: calc(100% + 9px); left: 0; width: min(440px, 70vw); padding: 13px; border: 1px solid #cbd9e7; border-radius: 9px; background: white; box-shadow: 0 10px 28px #324a6726; color: #34445a; }
