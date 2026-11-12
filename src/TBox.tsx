@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { AlertCircle, ArrowLeft, LoaderCircle, LogOut, RefreshCw } from 'lucide-react'
 import './tbox.css'
 
-const QUERY_ENDPOINT = '/api/query'
+const QUERY_ENDPOINT = `${(import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '')}/api/query`
 const HEO_NAMESPACE = 'https://mathhub.info/heo#'
 const RDF_TYPE = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type'
 const RDFS_SUBCLASS = 'http://www.w3.org/2000/01/rdf-schema#subClassOf'

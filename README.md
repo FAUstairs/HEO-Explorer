@@ -20,6 +20,20 @@ export INITIAL_ADMIN_PASSWORD='admin'
 npm run dev:server
 ```
 
+The frontend uses the backend at `http://localhost:3001` by default. To use a
+different backend, define `VITE_API_BASE_URL` before starting or building the
+frontend:
+
+```bash
+VITE_API_BASE_URL=http://localhost:3001 npm run dev
+```
+
+For a separately hosted frontend and backend, use the public backend URL:
+
+```bash
+VITE_API_BASE_URL=https://api.example.org npm run build
+```
+
 The initial user is created in the PostgreSQL `users` table only when both
 `INITIAL_ADMIN_USERNAME` and `INITIAL_ADMIN_PASSWORD` are configured. The
 password is stored as a bcrypt hash, never as plaintext. All ontology queries

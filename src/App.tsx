@@ -3,7 +3,9 @@ import { AlertCircle, ArrowLeft, CheckCircle2, ChevronLeft, ChevronRight, Extern
 import TBox from './TBox'
 import Diagram from './Diagram'
 
-const QUERY_ENDPOINT = '/api/query'
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '')
+const apiUrl = (path: string) => `${API_BASE_URL}${path}`
+const QUERY_ENDPOINT = apiUrl('/api/query')
 const EXAMPLE_SPARQL_QUERY = `PREFIX heo: <https://mathhub.info/heo#>
 
 SELECT DISTINCT ?personName ?moduleName WHERE {
@@ -460,7 +462,7 @@ function App() {
         setLoginError(null)
         const form = new FormData(event.currentTarget)
         try {
-            const response = await fetch('/api/auth/login', {
+            const response = await fetch(apiUrl('/api/auth/login'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ username: form.get('username'), password: form.get('password') }),
@@ -710,7 +712,7 @@ function App() {
     useEffect(() => {
         if (!token) return
         void loadClasses()
-        void fetch('/api/config', { headers: authenticatedHeaders(token) })
+        void fetch(apiUrl('/api/config'), { headers: authenticatedHeaders(token) })
             .then(async (response) => {
                 if (!response.ok) throw new Error(`The configuration service returned HTTP ${response.status}.`)
                 const data = await response.json() as { heoQueryEndpoint?: string }
