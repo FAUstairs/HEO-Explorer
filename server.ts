@@ -7,21 +7,37 @@ const app = express()
 const port = Number(process.env.PORT ?? 3001)
 const jwtSecret = process.env.JWT_SECRET
 const databaseUrl = process.env.DATABASE_URL
+const heoQueryEndpoint = process.env.HEO_QUERY_ENDPOINT ?? 'https://mathhub.info/api/backend/query'
+const initialAdminUsername = process.env.INITIAL_ADMIN_USERNAME
+const initialAdminPassword = process.env.INITIAL_ADMIN_PASSWORD
 
-if (!jwtSecret || !databaseUrl) {
-  throw new Error('JWT_SECRET and DATABASE_URL must be configured.')
+if (!jwtSecret || !databaseUrl || jwtSecret.length < 32) {
+  throw new Error('DATABASE_URL and a JWT_SECRET with at least 32 characters must be configured.')
 }
 
 const pool = new Pool({ connectionString: databaseUrl })
 app.use(express.json())
+app.use(express.urlencoded({ extended: false }))
 
 async function initializeDatabase() {
-  const passwordHash = await bcrypt.hash('admin', 12)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS users (
+      username TEXT PRIMARY KEY,
+      password_hash TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'user',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `)
   await pool.query(`
     CREATE TABLE IF NOT EXISTS admin_users (
       username TEXT PRIMARY KEY,
       password_hash TEXT NOT NULL
     );
+  `)
+  await pool.query(`
+    INSERT INTO users (username, password_hash, role)
+    SELECT username, password_hash, 'admin' FROM admin_users
+    ON CONFLICT (username) DO NOTHING;
   `)
   await pool.query(`
     CREATE TABLE IF NOT EXISTS heo_instance_notes (
@@ -32,11 +48,14 @@ async function initializeDatabase() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `)
-  await pool.query(`
-    INSERT INTO admin_users (username, password_hash)
-    VALUES ('admin', $1)
-    ON CONFLICT (username) DO NOTHING;
-  `, [passwordHash])
+  if (initialAdminUsername && initialAdminPassword) {
+    const passwordHash = await bcrypt.hash(initialAdminPassword, 12)
+    await pool.query(`
+      INSERT INTO users (username, password_hash, role)
+      VALUES ($1, $2, 'admin')
+      ON CONFLICT (username) DO NOTHING;
+    `, [initialAdminUsername, passwordHash])
+  }
 }
 
 function authenticate(request: express.Request, response: express.Response, next: express.NextFunction) {
@@ -52,10 +71,35 @@ function authenticate(request: express.Request, response: express.Response, next
 
 app.post('/api/auth/login', async (request, response) => {
   const { username, password } = request.body as { username?: string; password?: string }
-  if (username !== 'admin' || password !== 'admin') return response.status(401).json({ error: 'Invalid credentials.' })
-  const result = await pool.query('SELECT password_hash FROM admin_users WHERE username = $1', [username])
+  if (!username?.trim() || !password) return response.status(400).json({ error: 'Username and password are required.' })
+  const result = await pool.query('SELECT username, password_hash, role FROM users WHERE username = $1', [username.trim()])
   if (!result.rowCount || !(await bcrypt.compare(password, result.rows[0].password_hash))) return response.status(401).json({ error: 'Invalid credentials.' })
-  response.json({ token: jwt.sign({ sub: username, role: 'admin' }, jwtSecret, { expiresIn: '8h' }) })
+  const user = result.rows[0] as { username: string; role: string }
+  response.json({ token: jwt.sign({ sub: user.username, role: user.role }, jwtSecret, { expiresIn: '8h' }) })
+})
+
+app.post('/api/query', authenticate, async (request, response) => {
+  const query = typeof request.body.query === 'string' ? request.body.query.trim() : ''
+  if (!query) return response.status(400).json({ error: 'A SPARQL query is required.' })
+  if (query.length > 200_000) return response.status(413).json({ error: 'The SPARQL query is too large.' })
+  try {
+    const upstream = await fetch(heoQueryEndpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+      body: new URLSearchParams({ query }),
+    })
+    const body = await upstream.text()
+    response.status(upstream.status)
+    response.type(upstream.headers.get('content-type')?.includes('json') ? 'json' : 'text')
+    return response.send(body)
+  } catch (error) {
+    console.error('HEO query failed:', error)
+    return response.status(502).json({ error: 'The ontology service could not be reached.' })
+  }
+})
+
+app.get('/api/config', authenticate, (_request, response) => {
+  response.json({ heoQueryEndpoint })
 })
 
 app.get('/api/notes', authenticate, async (request, response) => {

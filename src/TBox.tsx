@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
-import { AlertCircle, ArrowLeft, LoaderCircle, RefreshCw } from 'lucide-react'
+import { AlertCircle, ArrowLeft, LoaderCircle, LogOut, RefreshCw } from 'lucide-react'
 import './tbox.css'
 
-const QUERY_ENDPOINT = import.meta.env.VITE_QUERY_ENDPOINT ?? 'https://mathhub.info/api/backend/query'
+const QUERY_ENDPOINT = '/api/query'
 const HEO_NAMESPACE = 'https://mathhub.info/heo#'
 const RDF_TYPE = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type'
 const RDFS_SUBCLASS = 'http://www.w3.org/2000/01/rdf-schema#subClassOf'
@@ -97,10 +97,10 @@ function parseTriples(payload: unknown): Triple[] {
   })).filter((triple) => triple.subject && triple.predicate && triple.object)
 }
 
-async function loadTriples(): Promise<Triple[]> {
+async function loadTriples(token: string): Promise<Triple[]> {
   const response = await fetch(QUERY_ENDPOINT, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
     body: new URLSearchParams({ query: TBOX_QUERY }),
   })
   if (!response.ok) throw new Error(`The ontology service returned HTTP ${response.status}.`)
@@ -108,10 +108,12 @@ async function loadTriples(): Promise<Triple[]> {
 }
 
 type TBoxProps = {
+  token: string
+  onLogout: () => void
   onBack?: () => void
 }
 
-export default function TBox({ onBack }: TBoxProps): JSX.Element {
+export default function TBox({ token, onLogout, onBack }: TBoxProps): JSX.Element {
   const [triples, setTriples] = useState<Triple[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -120,7 +122,7 @@ export default function TBox({ onBack }: TBoxProps): JSX.Element {
     setLoading(true)
     setError(null)
     try {
-      setTriples(await loadTriples())
+      setTriples(await loadTriples(token))
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'The TBox could not be loaded.')
     } finally {
@@ -130,7 +132,7 @@ export default function TBox({ onBack }: TBoxProps): JSX.Element {
 
   useEffect(() => {
     void refresh()
-  }, [])
+  }, [token])
 
   const classes = [...new Set(triples.flatMap(({ subject, predicate, object }) => {
     if (predicate === RDF_TYPE && object === OWL_CLASS) return [subject]
@@ -185,6 +187,7 @@ export default function TBox({ onBack }: TBoxProps): JSX.Element {
           <button className="refresh-button" onClick={() => void refresh()} disabled={loading}>
             <RefreshCw size={16} className={loading ? 'spin' : ''} /> Refresh
           </button>
+          <button className="refresh-button" onClick={onLogout}><LogOut size={16} /> Log out</button>
         </div>
       </header>
 

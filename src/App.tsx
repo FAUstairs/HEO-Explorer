@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
-import { AlertCircle, ArrowLeft, CheckCircle2, ChevronLeft, ChevronRight, ExternalLink, LoaderCircle, RefreshCw, Search, XCircle } from 'lucide-react'
+import { AlertCircle, ArrowLeft, CheckCircle2, ChevronLeft, ChevronRight, ExternalLink, LoaderCircle, LogOut, RefreshCw, Search, XCircle } from 'lucide-react'
 import TBox from './TBox'
 import Diagram from './Diagram'
 
-const QUERY_ENDPOINT = import.meta.env.VITE_QUERY_ENDPOINT ?? 'https://mathhub.info/api/backend/query'
+const QUERY_ENDPOINT = '/api/query'
 const EXAMPLE_SPARQL_QUERY = `PREFIX heo: <https://mathhub.info/heo#>
 
 SELECT DISTINCT ?personName ?moduleName WHERE {
@@ -111,6 +111,10 @@ function localName(iri: string): string {
 
 function sparqlString(value: string): string {
     return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\r?\n/g, '\\n')}"`
+}
+
+function authenticatedHeaders(token: string | null): Record<string, string> {
+    return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
 function appUrl(view: 'classes' | 'class' | 'instance' | 'tbox' | 'instances' | 'diagram' | 'subclasses' | 'sparql', values: Record<string, string> = {}): string {
@@ -440,8 +444,8 @@ function App() {
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState<string | null>(null)
     const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
-    // const [token, setToken] = useState(() => localStorage.getItem('heo-admin-token'))
-    const [token, setToken] = useState(() => "ABC")
+    const [heoQueryEndpoint, setHeoQueryEndpoint] = useState('Loading …')
+    const [token, setToken] = useState(() => localStorage.getItem('heo-admin-token'))
     const [loginError, setLoginError] = useState<string | null>(null)
     const [loggingIn, setLoggingIn] = useState(false)
     const restoredUrl = useRef(false)
@@ -470,6 +474,19 @@ function App() {
         } finally {
             setLoggingIn(false)
         }
+
+    }
+
+    function logout() {
+        localStorage.removeItem('heo-admin-token')
+        setToken(null)
+        setSelectedClass(null)
+        setSelectedInstance(null)
+        setShowDiagram(false)
+        setShowSparql(false)
+        setShowTBox(false)
+        setShowGlobalInstances(false)
+        navigateTo('classes')
     }
 
     const loadClasses = useCallback(async () => {
@@ -478,10 +495,10 @@ function App() {
         try {
             const response = await fetch(QUERY_ENDPOINT, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+                headers: { ...authenticatedHeaders(token), 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
                 body: new URLSearchParams({ query: ONTOLOGY_QUERY }),
             })
-            if (!response.ok) throw new Error(`Der Ontologie-Service antwortet mit HTTP ${response.status}.`)
+            if (!response.ok) throw new Error(`The ontology service returned HTTP ${response.status}.`)
             setClasses(parseRows(await response.json()))
             setLastUpdated(new Date())
         } catch (cause) {
@@ -489,7 +506,7 @@ function App() {
         } finally {
             setLoading(false)
         }
-    }, [])
+    }, [token])
 
     const showProperties = useCallback(async (item: HeoClass, updateUrl = true) => {
         if (updateUrl) navigateTo('class', { iri: item.iri })
@@ -508,17 +525,17 @@ function App() {
             const [propertyResponse, instanceResponse, hierarchyResponse] = await Promise.all([
                 fetch(QUERY_ENDPOINT, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+                    headers: { ...authenticatedHeaders(token), 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
                     body: new URLSearchParams({ query: propertyQuery(item.iri) }),
                 }),
                 fetch(QUERY_ENDPOINT, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+                    headers: { ...authenticatedHeaders(token), 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
                     body: new URLSearchParams({ query: instanceQuery(item.iri, instancePageSize, 0, '') }),
                 }),
                 fetch(QUERY_ENDPOINT, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+                    headers: { ...authenticatedHeaders(token), 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
                     body: new URLSearchParams({ query: classHierarchyQuery(item.iri) }),
                 }),
             ])
@@ -537,7 +554,7 @@ function App() {
             setPropertiesLoading(false)
             setInstancesLoading(false)
         }
-    }, [instancePageSize, navigateTo])
+    }, [instancePageSize, navigateTo, token])
 
     const openClassResource = useCallback((classIri: string) => {
         const classFromList = classes.find((item) => item.iri === classIri)
@@ -559,7 +576,7 @@ function App() {
         try {
             const response = await fetch(QUERY_ENDPOINT, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+                headers: { ...authenticatedHeaders(token), 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
                 body: new URLSearchParams({ query: instanceQuery(classIri, pageSize, page * pageSize, search) }),
             })
             if (!response.ok) throw new Error(`The ontology service returned HTTP ${response.status}.`)
@@ -572,7 +589,7 @@ function App() {
         } finally {
             if (requestId === instanceRequestId.current) setInstancesLoading(false)
         }
-    }, [instanceSearch])
+    }, [instanceSearch, token])
 
     const loadGlobalInstances = useCallback(async (page: number, pageSize: number, search = globalInstanceSearch) => {
         const requestId = ++globalInstanceRequestId.current
@@ -581,7 +598,7 @@ function App() {
         try {
             const response = await fetch(QUERY_ENDPOINT, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+                headers: { ...authenticatedHeaders(token), 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
                 body: new URLSearchParams({ query: allInstancesQuery(pageSize, page * pageSize, search) }),
             })
             if (!response.ok) throw new Error(`The ontology service returned HTTP ${response.status}.`)
@@ -594,7 +611,7 @@ function App() {
         } finally {
             if (requestId === globalInstanceRequestId.current) setGlobalInstancesLoading(false)
         }
-    }, [globalInstanceSearch])
+    }, [globalInstanceSearch, token])
 
     const loadInstanceProperties = useCallback(async (instance: HeoInstance) => {
         setInstancePropertiesLoading(true)
@@ -602,7 +619,7 @@ function App() {
         try {
             const response = await fetch(QUERY_ENDPOINT, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+                headers: { ...authenticatedHeaders(token), 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
                 body: new URLSearchParams({ query: instancePropertyQuery(instance.iri) }),
             })
             if (!response.ok) throw new Error(`The ontology service returned HTTP ${response.status}.`)
@@ -621,7 +638,7 @@ function App() {
         } finally {
             setInstancePropertiesLoading(false)
         }
-    }, [])
+    }, [token])
 
     const loadResourcePreview = useCallback(async (resource: { iri: string; label: string }) => {
         const requestId = ++resourcePreviewRequestId.current
@@ -632,7 +649,7 @@ function App() {
         try {
             const response = await fetch(QUERY_ENDPOINT, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+                headers: { ...authenticatedHeaders(token), 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
                 body: new URLSearchParams({ query: resourcePreviewQuery(resource.iri) }),
             })
             if (!response.ok) throw new Error(`The ontology service returned HTTP ${response.status}.`)
@@ -645,7 +662,7 @@ function App() {
         } finally {
             if (requestId === resourcePreviewRequestId.current) setResourcePreviewLoading(false)
         }
-    }, [])
+    }, [token])
 
     const clearResourcePreview = useCallback(() => {
         resourcePreviewRequestId.current += 1
@@ -691,7 +708,15 @@ function App() {
     }, [classes, openInstance])
 
     useEffect(() => {
-        if (token) void loadClasses()
+        if (!token) return
+        void loadClasses()
+        void fetch('/api/config', { headers: authenticatedHeaders(token) })
+            .then(async (response) => {
+                if (!response.ok) throw new Error(`The configuration service returned HTTP ${response.status}.`)
+                const data = await response.json() as { heoQueryEndpoint?: string }
+                setHeoQueryEndpoint(data.heoQueryEndpoint ?? 'Unknown')
+            })
+            .catch(() => setHeoQueryEndpoint('Unavailable'))
     }, [loadClasses, token])
 
     useEffect(() => {
@@ -822,7 +847,7 @@ function App() {
             if (!query) throw new Error('Please enter a SPARQL query.')
             const response = await fetch(QUERY_ENDPOINT, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+                headers: { ...authenticatedHeaders(token), 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
                 body: new URLSearchParams({ query }),
             })
             if (!response.ok) throw new Error(`The SPARQL endpoint responded with HTTP ${response.status}.`)
@@ -839,7 +864,10 @@ function App() {
             <main className="shell">
                 <header className="topbar">
                     <div className="brand"><span className="brand-mark">H</span><span>HEO <strong>Explorer</strong></span></div>
-                    <button className="refresh-button" onClick={() => { setShowSparql(false); navigateTo('classes') }}><ArrowLeft size={16} /> Back to classes</button>
+                    <div className="header-actions">
+                        <button className="refresh-button" onClick={() => { setShowSparql(false); navigateTo('classes') }}><ArrowLeft size={16} /> Back to classes</button>
+                        <button className="refresh-button" onClick={logout}><LogOut size={16} /> Log out</button>
+                    </div>
                 </header>
                 <section className="property-page sparql-page">
                     <button className="back-link" onClick={() => { setShowSparql(false); navigateTo('classes') }}><ArrowLeft size={16} /> Back to all classes</button>
@@ -865,12 +893,14 @@ function App() {
     }
 
     if (showTBox) {
-        return <TBox onBack={() => { setShowTBox(false); navigateTo('classes') }} />
+        return <TBox token={token} onBack={() => { setShowTBox(false); navigateTo('classes') }} onLogout={logout} />
     }
 
     if (showDiagram) {
         return <Diagram
             endpoint={QUERY_ENDPOINT}
+            token={token}
+            onLogout={logout}
             classes={classes}
             mode={diagramMode}
             onBack={() => { setShowDiagram(false); navigateTo('classes') }}
@@ -890,7 +920,10 @@ function App() {
             <main className="shell">
                 <header className="topbar">
                     <div className="brand"><span className="brand-mark">H</span><span>HEO <strong>Explorer</strong></span></div>
-                    <button className="refresh-button" onClick={() => { setShowGlobalInstances(false); navigateTo('classes') }}><ArrowLeft size={16} /> Back to classes</button>
+                    <div className="header-actions">
+                        <button className="refresh-button" onClick={() => { setShowGlobalInstances(false); navigateTo('classes') }}><ArrowLeft size={16} /> Back to classes</button>
+                        <button className="refresh-button" onClick={logout}><LogOut size={16} /> Log out</button>
+                    </div>
                 </header>
                 <section className="property-page">
                     <button className="back-link" onClick={() => { setShowGlobalInstances(false); navigateTo('classes') }}><ArrowLeft size={16} /> Back to all classes</button>
@@ -970,7 +1003,10 @@ function App() {
             <main className="shell">
                 <header className="topbar">
                     <div className="brand"><span className="brand-mark">H</span><span>HEO <strong>Explorer</strong></span></div>
-                    <button className="refresh-button" onClick={goBackFromInstance}><ArrowLeft size={16} /> Back</button>
+                    <div className="header-actions">
+                        <button className="refresh-button" onClick={goBackFromInstance}><ArrowLeft size={16} /> Back</button>
+                        <button className="refresh-button" onClick={logout}><LogOut size={16} /> Log out</button>
+                    </div>
                 </header>
                 <section className="property-page">
                     <button className="back-link" onClick={goBackFromInstance}><ArrowLeft size={16} /> Back to {instanceHistory.length ? 'previous instance' : selectedClass.notation}</button>
@@ -1051,7 +1087,7 @@ function App() {
                         })}
                     </div>}
                 </section>
-                <footer>{lastUpdated ? `Last updated: ${lastUpdated.toLocaleTimeString('en-GB')}` : 'Connecting to the triple store …'}</footer>
+                <footer>{lastUpdated ? `Last updated: ${lastUpdated.toLocaleTimeString('en-GB')}` : 'Connecting to the triple store …'}<br />HEO endpoint: <code>{heoQueryEndpoint}</code></footer>
             </main>
         )
     }
@@ -1061,9 +1097,12 @@ function App() {
             <main className="shell">
                 <header className="topbar">
                     <div className="brand"><span className="brand-mark">H</span><span>HEO <strong>Explorer</strong></span></div>
-                    <button className="refresh-button" onClick={() => { setSelectedClass(null); navigateTo('classes') }}>
-                        <ArrowLeft size={16} /> Back to classes
-                    </button>
+                    <div className="header-actions">
+                        <button className="refresh-button" onClick={() => { setSelectedClass(null); navigateTo('classes') }}>
+                            <ArrowLeft size={16} /> Back to classes
+                        </button>
+                        <button className="refresh-button" onClick={logout}><LogOut size={16} /> Log out</button>
+                    </div>
                 </header>
                 <section className="property-page">
                     <button className="back-link" onClick={() => { setSelectedClass(null); navigateTo('classes') }}>
@@ -1164,7 +1203,7 @@ function App() {
                         </div>)}
                     </div>}
                 </section>
-                <footer>{lastUpdated ? `Last updated: ${lastUpdated.toLocaleTimeString('en-GB')}` : 'Connecting to the triple store …'}</footer>
+                <footer>{lastUpdated ? `Last updated: ${lastUpdated.toLocaleTimeString('en-GB')}` : 'Connecting to the triple store …'}<br />HEO endpoint: <code>{heoQueryEndpoint}</code></footer>
             </main>
         )
     }
@@ -1188,6 +1227,9 @@ function App() {
                     </button>
                     <button className="refresh-button" onClick={() => void loadClasses()} disabled={loading}>
                         <RefreshCw size={16} className={loading ? 'spin' : ''} /> Refresh
+                    </button>
+                    <button className="refresh-button" onClick={logout}>
+                        <LogOut size={16} /> Log out
                     </button>
                 </div>
             </header>
@@ -1245,7 +1287,7 @@ function App() {
                     ))}
                 </section>
             )}
-            <footer>{lastUpdated ? `Last updated: ${lastUpdated.toLocaleTimeString('en-GB')}` : 'Connecting to the triple store …'}</footer>
+            <footer>{lastUpdated ? `Last updated: ${lastUpdated.toLocaleTimeString('en-GB')}` : 'Connecting to the triple store …'}<br />HEO endpoint: <code>{heoQueryEndpoint}</code></footer>
         </main>
     )
 }

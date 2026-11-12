@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import ELK from 'elkjs/lib/elk.bundled.js'
 import type { ElkNode } from 'elkjs/lib/elk-api.js'
-import { AlertCircle, ArrowLeft, LoaderCircle, Minus, Plus, RefreshCw } from 'lucide-react'
+import { AlertCircle, ArrowLeft, LoaderCircle, LogOut, Minus, Plus, RefreshCw } from 'lucide-react'
 import type { HeoClass } from './App'
 
 type Binding = { value?: string; type?: string }
@@ -23,6 +23,8 @@ type LayoutEdge = { id: string; sections?: LayoutSection[]; labels?: LayoutLabel
 
 type DiagramProps = {
     endpoint: string
+    token: string
+    onLogout: () => void
     classes: HeoClass[]
     mode?: 'properties' | 'subclasses'
     onBack: () => void
@@ -91,7 +93,7 @@ function parseEdges(payload: unknown, mode: 'properties' | 'subclasses'): Diagra
     return [...unique.values()]
 }
 
-export default function Diagram({ endpoint, classes, mode = 'properties', onBack, onOpenClass, onChangeMode }: DiagramProps) {
+export default function Diagram({ endpoint, token, classes, mode = 'properties', onLogout, onBack, onOpenClass, onChangeMode }: DiagramProps) {
     const [edges, setEdges] = useState<DiagramEdge[]>([])
     const [literalEdges, setLiteralEdges] = useState<DiagramEdge[]>([])
     const [loading, setLoading] = useState(true)
@@ -121,14 +123,14 @@ export default function Diagram({ endpoint, classes, mode = 'properties', onBack
             const requests = [
                 fetch(endpoint, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+                    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
                     body: new URLSearchParams({ query: mode === 'subclasses' ? subclassQuery : propertyQuery }),
                 }),
             ]
             if (mode === 'subclasses') {
                 requests.push(fetch(endpoint, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+                    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
                     body: new URLSearchParams({ query: propertyQuery }),
                 }))
             }
@@ -260,7 +262,10 @@ export default function Diagram({ endpoint, classes, mode = 'properties', onBack
         <main className="shell diagram-shell">
             <header className="topbar">
                 <div className="brand"><span className="brand-mark">H</span><span>HEO <strong>Explorer</strong></span></div>
-                <button className="refresh-button" onClick={onBack}><ArrowLeft size={16} /> Back to classes</button>
+                <div className="header-actions">
+                    <button className="refresh-button" onClick={onBack}><ArrowLeft size={16} /> Back to classes</button>
+                    <button className="refresh-button" onClick={onLogout}><LogOut size={16} /> Log out</button>
+                </div>
             </header>
             <section className="property-page diagram-page">
                 <button className="back-link" onClick={onBack}><ArrowLeft size={16} /> Back to all classes</button>
