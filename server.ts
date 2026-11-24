@@ -117,7 +117,15 @@ app.post('/api/notes', authenticate, async (request, response) => {
 
 initializeDatabase()
   .then(() => {
-    app.listen(port, () => console.log(`HEO API listening on http://localhost:${port}`))
+    app.listen(port, (error) => {
+      if (error) {
+        console.error(`HEO API could not listen on port ${port}:`, error)
+        process.exitCode = 1
+        void pool.end()
+        return
+      }
+      console.log(`HEO API listening on http://localhost:${port}`)
+    })
   })
   .catch((error) => {
     console.error('Database initialization failed:', error)

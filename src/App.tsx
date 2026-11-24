@@ -2,9 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import { AlertCircle, ArrowLeft, CheckCircle2, ChevronLeft, ChevronRight, ExternalLink, LoaderCircle, LogOut, RefreshCw, Search, XCircle } from 'lucide-react'
 import TBox from './TBox'
 import Diagram from './Diagram'
+import Questions from './Questions'
+import { apiUrl } from './api'
 
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '')
-const apiUrl = (path: string) => `${API_BASE_URL}${path}`
 const QUERY_ENDPOINT = apiUrl('/api/query')
 const EXAMPLE_SPARQL_QUERY = `PREFIX heo: <https://mathhub.info/heo#>
 
@@ -18,8 +18,16 @@ SELECT DISTINCT ?personName ?moduleName WHERE {
   BIND(CONCAT(STR(?firstName), " ", STR(?lastName)) AS ?personName)
 }
 ORDER BY LCASE(STR(?personName))`
-const ONTOLOGY_QUERY = `
-PREFIX heo: <https://mathhub.info/heo#>
+const classNamespaces = {
+    HEO: 'https://mathhub.info/heo#',
+    ULO: 'http://mathhub.info/ulo#',
+} as const
+const MATHHUB_ORIGIN = 'https://mathhub.info'
+
+type ClassNamespace = keyof typeof classNamespaces
+
+const ontologyQuery = (namespace: ClassNamespace) => `
+PREFIX ontology: <${classNamespaces[namespace]}>
 PREFIX owl: <http://www.w3.org/2002/07/owl#>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 
@@ -28,9 +36,10 @@ SELECT ?class (SAMPLE(?classLabel) AS ?label) (SAMPLE(?classComment) AS ?comment
     SELECT DISTINCT ?class WHERE {
       { ?existingInstance a ?class . }
       UNION { ?class a owl:Class . }
+      UNION { ?class a rdfs:Class . }
       UNION { ?class rdfs:subClassOf ?parent . }
       UNION { ?child rdfs:subClassOf ?class . }
-      FILTER(STRSTARTS(STR(?class), STR(heo:)))
+      FILTER(STRSTARTS(STR(?class), STR(ontology:)))
     }
   }
   OPTIONAL { ?class rdfs:label ?classLabel . }
@@ -78,6 +87,7 @@ type InstanceProperty = {
     object: string
     objectLabel: string
     objectIsResource: boolean
+    blankNodeProperties?: Map<string, { predicate: string; value: string; label: string; valueIsResource: boolean }>
 }
 
 function JsonValue({ name, value, depth = 0 }: { name?: string; value: unknown; depth?: number }) {
@@ -103,12 +113,29 @@ function valueOf(value: Binding | string | null | undefined): string {
     return typeof value === 'string' ? value : value?.value ?? ''
 }
 
-function isHeoIri(iri: string): boolean {
-    return iri.startsWith('https://mathhub.info/heo#')
+function isExplorerClassIri(iri: string): boolean {
+    return Object.values(classNamespaces).some((namespace) => iri.startsWith(namespace))
+}
+
+function instanceContentUrl(iri: string): string | undefined {
+    try {
+        const url = new URL(iri)
+        if (url.protocol !== 'http:' && url.protocol !== 'https:') return
+        if (url.origin === 'http://mathhub.info') url.protocol = 'https:'
+        return url.href
+    } catch {
+        return undefined
+    }
 }
 
 function localName(iri: string): string {
     return iri.split(/[/#]/).pop() || iri
+}
+
+function sparqlIri(iri: string): string {
+    // Preserve existing percent escapes and IRI delimiters while encoding characters forbidden in SPARQL IRI references.
+    const encoded = iri.replace(/[\x00-\x20\x7f<>"{}|^`\\]/g, (character) => encodeURIComponent(character))
+    return `<${encoded}>`
 }
 
 function sparqlString(value: string): string {
@@ -119,7 +146,9 @@ function authenticatedHeaders(token: string | null): Record<string, string> {
     return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
-function appUrl(view: 'classes' | 'class' | 'instance' | 'tbox' | 'instances' | 'diagram' | 'subclasses' | 'sparql', values: Record<string, string> = {}): string {
+type AppView = 'classes' | 'class' | 'instance' | 'tbox' | 'instances' | 'diagram' | 'subclasses' | 'sparql' | 'modules'
+
+function appUrl(view: AppView, values: Record<string, string> = {}): string {
     const url = new URL(window.location.href)
     const basePath = import.meta.env.BASE_URL.replace(/\/$/, '')
     url.pathname = `${basePath}${view === 'classes' ? '/' : `/${view}`}`
@@ -135,7 +164,7 @@ PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 
 SELECT DISTINCT ?property ?propertyType ?label ?range ?originClass ?originLabel WHERE {
-  <${classIri}> rdfs:subClassOf* ?originClass .
+  ${sparqlIri(classIri)} rdfs:subClassOf* ?originClass .
   ?property a ?propertyType ;
             rdfs:domain ?domain .
   VALUES ?propertyType { owl:DatatypeProperty owl:ObjectProperty }
@@ -153,12 +182,12 @@ PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 SELECT ?relation ?related WHERE {
   {
     BIND("parent" AS ?relation)
-    <${classIri}> rdfs:subClassOf ?related .
+    ${sparqlIri(classIri)} rdfs:subClassOf ?related .
     FILTER(isIRI(?related))
   }
   UNION {
     BIND("child" AS ?relation)
-    ?related rdfs:subClassOf <${classIri}> .
+    ?related rdfs:subClassOf ${sparqlIri(classIri)} .
     FILTER(isIRI(?related))
   }
 }`
@@ -184,7 +213,7 @@ SELECT ?instance (SAMPLE(?instanceLabel) AS ?label) ?dataProperty ?dataValue
 WHERE {
   {
     SELECT DISTINCT ?instance WHERE {
-      ?instance a <${classIri}> .
+      ?instance a ${sparqlIri(classIri)} .
       ${searchFilter}
     }
     ORDER BY STR(?instance)
@@ -237,18 +266,23 @@ function instancePropertyQuery(instanceIri: string): string {
     return `
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 
-SELECT ?direction ?subject ?subjectLabel ?predicate ?object ?objectLabel WHERE {
+SELECT ?direction ?subject ?subjectLabel ?predicate ?object ?objectLabel ?nodePredicate ?nodeValue ?nodeLabel WHERE {
   {
     BIND("outgoing" AS ?direction)
-    BIND(<${instanceIri}> AS ?subject)
-    <${instanceIri}> ?predicate ?object .
+    BIND(${sparqlIri(instanceIri)} AS ?subject)
+    ${sparqlIri(instanceIri)} ?predicate ?object .
     OPTIONAL { ?object rdfs:label ?objectLabel . }
+    OPTIONAL {
+      ?object ?nodePredicate ?nodeValue .
+      FILTER(isBlank(?object))
+      OPTIONAL { ?nodeValue rdfs:label ?nodeLabel . }
+    }
   }
   UNION
   {
     BIND("incoming" AS ?direction)
-    ?subject ?predicate <${instanceIri}> .
-    BIND(<${instanceIri}> AS ?object)
+    ?subject ?predicate ${sparqlIri(instanceIri)} .
+    BIND(${sparqlIri(instanceIri)} AS ?object)
     OPTIONAL { ?subject rdfs:label ?subjectLabel . }
   }
 }
@@ -260,14 +294,14 @@ function resourcePreviewQuery(instanceIri: string): string {
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 
 SELECT ?predicate ?object ?objectLabel WHERE {
-  <${instanceIri}> ?predicate ?object .
+  ${sparqlIri(instanceIri)} ?predicate ?object .
   OPTIONAL { ?object rdfs:label ?objectLabel . }
 }
 ORDER BY STR(?predicate) STR(?object)
 LIMIT 30`
 }
 
-function parseRows(payload: unknown): HeoClass[] {
+function parseRows(payload: unknown, namespace: ClassNamespace): HeoClass[] {
     const rows = Array.isArray(payload)
         ? payload
         : (payload as { results?: { bindings?: ResultRow[] }; bindings?: ResultRow[] })?.results?.bindings
@@ -277,7 +311,7 @@ function parseRows(payload: unknown): HeoClass[] {
     const unique = new Map<string, HeoClass>()
     for (const row of rows as ResultRow[]) {
         const iri = valueOf(row.class)
-        if (!iri || !isHeoIri(iri)) continue
+        if (!iri.startsWith(classNamespaces[namespace])) continue
         const notation = valueOf(row.label) || localName(iri)
         unique.set(iri, {
             iri,
@@ -357,19 +391,39 @@ function parseInstanceProperties(payload: unknown): InstanceProperty[] {
         ?? (payload as { bindings?: ResultRow[] })?.bindings
         ?? []
 
-    return (rows as ResultRow[]).map((row) => {
+    const properties = new Map<string, InstanceProperty>()
+    for (const row of rows as ResultRow[]) {
         const direction = valueOf(row.direction) === 'incoming' ? 'incoming' : 'outgoing'
         const object = row.object
-        return {
+        const objectType = typeof object === 'string' ? undefined : object?.type
+        const property: InstanceProperty = {
             direction,
             subject: valueOf(row.subject),
             subjectLabel: valueOf(row.subjectLabel),
             predicate: valueOf(row.predicate),
             object: valueOf(object),
             objectLabel: valueOf(row.objectLabel),
-            objectIsResource: typeof object !== 'string' && object?.type === 'uri',
-        } satisfies InstanceProperty
-    }).filter((property) => property.predicate && property.object)
+            objectIsResource: objectType === 'uri',
+            blankNodeProperties: objectType === 'bnode' ? new Map() : undefined,
+        }
+        if (!property.predicate || !property.object) continue
+        const key = JSON.stringify([direction, property.subject, property.predicate, objectType, property.object])
+        const existing = properties.get(key) ?? property
+        properties.set(key, existing)
+        const nodePredicate = valueOf(row.nodePredicate)
+        if (existing.blankNodeProperties && nodePredicate) {
+            const value = valueOf(row.nodeValue)
+            const nodeType = typeof row.nodeValue === 'string' ? undefined : row.nodeValue?.type
+            const label = valueOf(row.nodeLabel)
+            existing.blankNodeProperties.set(JSON.stringify([nodePredicate, nodeType, value, label]), {
+                predicate: nodePredicate,
+                value: nodeType === 'bnode' ? `_:${value}` : value,
+                label,
+                valueIsResource: nodeType === 'uri',
+            })
+        }
+    }
+    return [...properties.values()]
 }
 
 type ResourcePreviewProperty = {
@@ -398,7 +452,11 @@ function parseResourcePreview(payload: unknown): ResourcePreviewProperty[] {
 }
 
 function App() {
-    const [classes, setClasses] = useState<HeoClass[]>([])
+    const [namespace, setNamespace] = useState<ClassNamespace>('HEO')
+    const [heoClasses, setHeoClasses] = useState<HeoClass[]>([])
+    const [uloClasses, setUloClasses] = useState<HeoClass[]>([])
+    const classes = namespace === 'HEO' ? heoClasses : uloClasses
+    const classRequestId = useRef(0)
     const [search, setSearch] = useState('')
     const [instanceFilter, setInstanceFilter] = useState<InstanceFilter>('all')
     const [selectedClass, setSelectedClass] = useState<HeoClass | null>(null)
@@ -421,6 +479,7 @@ function App() {
     const [globalInstancesError, setGlobalInstancesError] = useState<string | null>(null)
     const [showGlobalInstances, setShowGlobalInstances] = useState(false)
     const [showTBox, setShowTBox] = useState(false)
+    const [showModules, setShowModules] = useState(() => window.location.pathname === appUrl('modules'))
     const [showDiagram, setShowDiagram] = useState(false)
     const [showSparql, setShowSparql] = useState(false)
     const [sparqlQuery, setSparqlQuery] = useState(EXAMPLE_SPARQL_QUERY)
@@ -437,7 +496,8 @@ function App() {
     const [instanceProperties, setInstanceProperties] = useState<InstanceProperty[]>([])
     const [instancePropertiesLoading, setInstancePropertiesLoading] = useState(false)
     const [instancePropertiesError, setInstancePropertiesError] = useState<string | null>(null)
-    const [enabledProperties, setEnabledProperties] = useState<Set<string>>(new Set())
+    const [disabledPredicates, setDisabledPredicates] = useState<Set<string>>(new Set())
+    const instancePropertiesRequestId = useRef(0)
     const [hoveredResource, setHoveredResource] = useState<{ iri: string; label: string } | null>(null)
     const [resourcePreview, setResourcePreview] = useState<ResourcePreviewProperty[]>([])
     const [resourcePreviewLoading, setResourcePreviewLoading] = useState(false)
@@ -452,8 +512,10 @@ function App() {
     const [loggingIn, setLoggingIn] = useState(false)
     const restoredUrl = useRef(false)
 
-    const navigateTo = useCallback((view: 'classes' | 'class' | 'instance' | 'tbox' | 'instances' | 'diagram' | 'subclasses' | 'sparql', values: Record<string, string> = {}) => {
+    const navigateTo = useCallback((view: AppView, values: Record<string, string> = {}) => {
         window.history.pushState({}, '', appUrl(view, values))
+        setShowModules(view === 'modules')
+        window.scrollTo(0, 0)
     }, [])
 
     async function login(event: FormEvent<HTMLFormElement>) {
@@ -492,23 +554,27 @@ function App() {
     }
 
     const loadClasses = useCallback(async () => {
+        const requestId = ++classRequestId.current
         setLoading(true)
         setError(null)
         try {
             const response = await fetch(QUERY_ENDPOINT, {
                 method: 'POST',
                 headers: { ...authenticatedHeaders(token), 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-                body: new URLSearchParams({ query: ONTOLOGY_QUERY }),
+                body: new URLSearchParams({ query: ontologyQuery(namespace) }),
             })
             if (!response.ok) throw new Error(`The ontology service returned HTTP ${response.status}.`)
-            setClasses(parseRows(await response.json()))
+            const rows = parseRows(await response.json(), namespace)
+            if (requestId !== classRequestId.current) return
+            if (namespace === 'HEO') setHeoClasses(rows)
+            else setUloClasses(rows)
             setLastUpdated(new Date())
         } catch (cause) {
-            setError(cause instanceof Error ? cause.message : 'The classes could not be loaded.')
+            if (requestId === classRequestId.current) setError(cause instanceof Error ? cause.message : 'The classes could not be loaded.')
         } finally {
-            setLoading(false)
+            if (requestId === classRequestId.current) setLoading(false)
         }
-    }, [token])
+    }, [namespace, token])
 
     const showProperties = useCallback(async (item: HeoClass, updateUrl = true) => {
         if (updateUrl) navigateTo('class', { iri: item.iri })
@@ -616,6 +682,7 @@ function App() {
     }, [globalInstanceSearch, token])
 
     const loadInstanceProperties = useCallback(async (instance: HeoInstance) => {
+        const requestId = ++instancePropertiesRequestId.current
         setInstancePropertiesLoading(true)
         setInstancePropertiesError(null)
         try {
@@ -626,19 +693,15 @@ function App() {
             })
             if (!response.ok) throw new Error(`The ontology service returned HTTP ${response.status}.`)
             const nextProperties = parseInstanceProperties(await response.json())
+            if (requestId !== instancePropertiesRequestId.current) return
             setInstanceProperties(nextProperties)
-            setEnabledProperties((current) => {
-                const available = new Set(nextProperties.map((property) => property.predicate))
-                const retained = new Set([...current].filter((predicate) => available.has(predicate)))
-                nextProperties.forEach((property) => {
-                    if (!current.size || property.predicate.startsWith('https://mathhub.info/heo#')) retained.add(property.predicate)
-                })
-                return retained
-            })
+            setDisabledPredicates(new Set())
         } catch (cause) {
-            setInstancePropertiesError(cause instanceof Error ? cause.message : 'The instance data could not be loaded.')
+            if (requestId === instancePropertiesRequestId.current) {
+                setInstancePropertiesError(cause instanceof Error ? cause.message : 'The instance data could not be loaded.')
+            }
         } finally {
-            setInstancePropertiesLoading(false)
+            if (requestId === instancePropertiesRequestId.current) setInstancePropertiesLoading(false)
         }
     }, [token])
 
@@ -689,6 +752,7 @@ function App() {
         if (previous) {
             setInstanceHistory((history) => history.slice(0, -1))
             setSelectedInstance(previous)
+            window.scrollTo(0, 0)
             void loadInstanceProperties(previous)
         } else {
             setSelectedInstance(null)
@@ -712,6 +776,10 @@ function App() {
     useEffect(() => {
         if (!token) return
         void loadClasses()
+    }, [loadClasses, token])
+
+    useEffect(() => {
+        if (!token) return
         void fetch(apiUrl('/api/config'), { headers: authenticatedHeaders(token) })
             .then(async (response) => {
                 if (!response.ok) throw new Error(`The configuration service returned HTTP ${response.status}.`)
@@ -719,7 +787,13 @@ function App() {
                 setHeoQueryEndpoint(data.heoQueryEndpoint ?? 'Unknown')
             })
             .catch(() => setHeoQueryEndpoint('Unavailable'))
-    }, [loadClasses, token])
+    }, [token])
+
+    useEffect(() => {
+        const previousRestoration = window.history.scrollRestoration
+        window.history.scrollRestoration = 'manual'
+        return () => { window.history.scrollRestoration = previousRestoration }
+    }, [])
 
     useEffect(() => {
         const restoreFromUrl = () => {
@@ -728,6 +802,16 @@ function App() {
             const routePath = url.pathname.startsWith(`${basePath}/`)
                 ? url.pathname.slice(basePath.length)
                 : url.pathname
+            setShowModules(routePath === '/modules')
+            if (routePath === '/modules') {
+                setShowTBox(false)
+                setShowDiagram(false)
+                setShowSparql(false)
+                setShowGlobalInstances(false)
+                setSelectedClass(null)
+                setSelectedInstance(null)
+                return
+            }
             const classIri = routePath === '/instance'
                 ? url.searchParams.get('class')
                 : url.searchParams.get('iri')
@@ -810,8 +894,12 @@ function App() {
             restoreFromUrl()
         }
 
-        window.addEventListener('popstate', restoreFromUrl)
-        return () => window.removeEventListener('popstate', restoreFromUrl)
+        const handlePopState = () => {
+            restoreFromUrl()
+            window.scrollTo(0, 0)
+        }
+        window.addEventListener('popstate', handlePopState)
+        return () => window.removeEventListener('popstate', handlePopState)
     }, [classes, globalInstancePageSize, globalInstanceSearch, loadGlobalInstances, loadInstanceProperties, showProperties])
 
     const filteredClasses = useMemo(() => {
@@ -861,6 +949,20 @@ function App() {
         }
     }
 
+    if (showModules) {
+        return (
+            <main className="shell">
+                <header className="topbar">
+                    <div className="brand"><span className="brand-mark">H</span><span>HEO <strong>Explorer</strong></span></div>
+                    <div className="header-actions">
+                        <button className="refresh-button" onClick={() => navigateTo('classes')}><ArrowLeft size={16} /> Back to classes</button>
+                    </div>
+                </header>
+                <Questions endpoint={QUERY_ENDPOINT} token={token} />
+            </main>
+        )
+    }
+
     if (showSparql) {
         return (
             <main className="shell">
@@ -903,7 +1005,7 @@ function App() {
             endpoint={QUERY_ENDPOINT}
             token={token}
             onLogout={logout}
-            classes={classes}
+            classes={heoClasses}
             mode={diagramMode}
             onBack={() => { setShowDiagram(false); navigateTo('classes') }}
             onChangeMode={(mode) => {
@@ -994,7 +1096,13 @@ function App() {
     }
 
     if (selectedClass && selectedInstance) {
-        const visibleProperties = instanceProperties.filter((property) => enabledProperties.has(property.predicate))
+        const contentUrl = selectedClass.iri.startsWith(classNamespaces.ULO)
+            ? instanceContentUrl(selectedInstance.iri)
+            : undefined
+        const contentOrigin = contentUrl ? new URL(contentUrl).origin : undefined
+        const allowMathHubStorage = contentOrigin === MATHHUB_ORIGIN
+            && contentOrigin !== window.location.origin
+        const visibleProperties = instanceProperties.filter((property) => !disabledPredicates.has(property.predicate))
         const propertyName = (iri: string) => properties.find((property) => property.iri === iri)?.label || localName(iri)
         const incomingPredicates = new Set(
             instanceProperties
@@ -1022,8 +1130,8 @@ function App() {
                                 <button key={predicate} className={[
                                     'predicate-toggle',
                                     incomingPredicates.has(predicate) ? 'incoming' : '',
-                                    enabledProperties.has(predicate) ? 'active' : '',
-                                ].filter(Boolean).join(' ')} onClick={() => setEnabledProperties((current) => {
+                                    disabledPredicates.has(predicate) ? '' : 'active',
+                                ].filter(Boolean).join(' ')} aria-pressed={!disabledPredicates.has(predicate)} onClick={() => setDisabledPredicates((current) => {
                                     const next = new Set(current)
                                     if (next.has(predicate)) next.delete(predicate); else next.add(predicate)
                                     return next
@@ -1054,7 +1162,7 @@ function App() {
                                     <button className="resource-link" onClick={() => {
                                         if (property.direction === 'outgoing'
                                             && property.predicate === 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type'
-                                            && isHeoIri(property.object)) {
+                                            && isExplorerClassIri(property.object)) {
                                             openClassResource(property.object)
                                         } else {
                                             openInstance({
@@ -1082,12 +1190,56 @@ function App() {
                                         </div>}
                                     </div>}
                                 </span>
-                                : <span className="literal-value">{property.object}</span>}
+                                : property.blankNodeProperties
+                                    ? <div className="blank-node">
+                                        {property.objectLabel && <strong>{property.objectLabel}</strong>}
+                                        {property.blankNodeProperties.size > 0
+                                            ? <dl>
+                                                {[...property.blankNodeProperties].map(([key, detail]) => {
+                                                    const label = detail.label || detail.value
+                                                    const canOpen = detail.valueIsResource
+                                                        && detail.predicate === `${classNamespaces.ULO}po-symbol`
+                                                    return (
+                                                        <div key={key}>
+                                                            <dt title={detail.predicate}>{propertyName(detail.predicate)}</dt>
+                                                            <dd title={detail.label ? detail.value : undefined}>
+                                                                {canOpen ? (
+                                                                    <button type="button" className="resource-link" onClick={() => openInstance({
+                                                                        iri: detail.value,
+                                                                        label: detail.label || localName(detail.value),
+                                                                        classIri: '',
+                                                                        dataProperties: [],
+                                                                    })}>{label} <ExternalLink size={13} /></button>
+                                                                ) : label}
+                                                            </dd>
+                                                        </div>
+                                                    )
+                                                })}
+                                            </dl>
+                                            : !property.objectLabel && <span className="literal-value">Blank node (_:{property.object})</span>}
+                                    </div>
+                                    : <span className="literal-value">{property.object}</span>}
                                     <code title={property.predicate}>{property.predicate}</code>
                                 </div>
                             )
                         })}
                     </div>}
+                    {contentUrl && (
+                        <section className="instance-content" aria-labelledby="instance-content-heading">
+                            <h2 id="instance-content-heading">Resource content</h2>
+                            <a className="resource-link" href={contentUrl} target="_blank" rel="noopener noreferrer">
+                                Open resource in a new tab <ExternalLink size={13} />
+                            </a>
+                            <iframe
+                                key={contentUrl}
+                                src={contentUrl}
+                                title={`Content of ${selectedInstance.label}`}
+                                sandbox={allowMathHubStorage ? 'allow-scripts allow-same-origin' : 'allow-scripts'}
+                                referrerPolicy="no-referrer"
+                                loading="lazy"
+                            />
+                        </section>
+                    )}
                 </section>
                 <footer>{lastUpdated ? `Last updated: ${lastUpdated.toLocaleTimeString('en-GB')}` : 'Connecting to the triple store …'}<br />HEO endpoint: <code>{heoQueryEndpoint}</code></footer>
             </main>
@@ -1224,6 +1376,9 @@ function App() {
                     <button className="refresh-button" onClick={() => { setShowTBox(true); navigateTo('tbox') }}>
                         TBox
                     </button>
+                    <button className="refresh-button" onClick={() => navigateTo('modules')}>
+                        Questions
+                    </button>
                     <button className="refresh-button" onClick={() => { setShowGlobalInstances(true); setGlobalInstancePage(0); navigateTo('instances'); void loadGlobalInstances(0, globalInstancePageSize, globalInstanceSearch) }}>
                         <Search size={16} /> Search all instances
                     </button>
@@ -1239,10 +1394,25 @@ function App() {
             <section className="hero">
                 <div>
                     <p className="eyebrow">Ontology Explorer</p>
-                    <h1>HEO Classes</h1>
-                    <p className="intro">All available classes from the HEO ontology at a glance.</p>
+                    <h1>{namespace} Classes</h1>
+                    <p className="intro">All available classes in the {namespace} namespace at a glance.</p>
                 </div>
-                <div className="status-pill"><span className="status-dot" /> HEO namespace only</div>
+                <div className="namespace-options" role="group" aria-label="Class namespace">
+                    {(['HEO', 'ULO'] as const).map((option) => (
+                        <button key={option} type="button" className="status-pill" aria-pressed={namespace === option} onClick={() => {
+                            setSearch('')
+                            setInstanceFilter('all')
+                            if (namespace !== option) {
+                                classRequestId.current++
+                                setLoading(true)
+                                setError(null)
+                                setNamespace(option)
+                            }
+                        }}>
+                            <span className="status-dot" aria-hidden="true" /> {option} namespace only
+                        </button>
+                    ))}
+                </div>
             </section>
 
             <section className="toolbar" aria-label="Filter classes">
@@ -1263,7 +1433,7 @@ function App() {
             {!error && loading && <div className="loading"><LoaderCircle className="spin" size={28} /><span>Loading classes from the ontology …</span></div>}
             {!error && !loading && filteredClasses.length === 0 && <div className="empty"><Search size={30} /><strong>No classes found</strong><span>Try a different search term.</span></div>}
             {!error && !loading && filteredClasses.length > 0 && (
-                <section className="class-grid" aria-label="HEO classes">
+                <section className="class-grid" aria-label={`${namespace} classes`}>
                     {filteredClasses.map((item, index) => (
                         <article
                             className="class-card"

@@ -20,12 +20,12 @@ export INITIAL_ADMIN_PASSWORD='admin'
 npm run dev:server
 ```
 
-The frontend uses the backend at `http://localhost:3001` by default. To use a
-different backend, define `VITE_API_BASE_URL` before starting or building the
-frontend:
+During development, the browser sends API requests to the Vite server, which
+proxies them to `http://localhost:3001` by default. If the API runs on a
+different port, set the proxy target when starting Vite:
 
 ```bash
-VITE_API_BASE_URL=http://127.0.0.1:3001 npm run dev
+VITE_API_BASE_URL=http://127.0.0.1:3002 npm run dev
 ```
 
 For a separately hosted frontend and backend, use the public backend URL:
