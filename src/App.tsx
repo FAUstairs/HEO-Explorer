@@ -710,6 +710,7 @@ function App() {
 
     const loadInstanceProperties = useCallback(async (instance: HeoInstance) => {
         const requestId = ++instancePropertiesRequestId.current
+        setInstanceProperties([])
         setInstancePropertiesLoading(true)
         setInstancePropertiesError(null)
         try {
@@ -1129,7 +1130,11 @@ function App() {
         const contentOrigin = contentUrl ? new URL(contentUrl).origin : undefined
         const allowMathHubStorage = contentOrigin === MATHHUB_ORIGIN
             && contentOrigin !== window.location.origin
-        const visibleProperties = instanceProperties.filter((property) => !disabledPredicates.has(property.predicate))
+        const availablePredicates = new Set(instanceProperties.map((property) => property.predicate))
+        const isPredicateActive = (predicate: string) =>
+            availablePredicates.has(predicate) && !disabledPredicates.has(predicate)
+        const visibleProperties = instanceProperties.filter((property) => isPredicateActive(property.predicate))
+        const predicates = new Set([...properties.map((property) => property.iri), ...availablePredicates])
         const propertyName = (iri: string) => properties.find((property) => property.iri === iri)?.label || localName(iri)
         const incomingPredicates = new Set(
             instanceProperties
@@ -1153,22 +1158,33 @@ function App() {
                     <div className="instance-filter-panel">
                         <div><p className="eyebrow">Predicate filters</p><h2>Displayed properties</h2></div>
                         <div className="predicate-toggles">
-                            {[...new Set([...properties.map((property) => property.iri), ...instanceProperties.map((property) => property.predicate)])].map((predicate) => (
-                                <button key={predicate} className={[
-                                    'predicate-toggle',
-                                    incomingPredicates.has(predicate) ? 'incoming' : '',
-                                    disabledPredicates.has(predicate) ? '' : 'active',
-                                ].filter(Boolean).join(' ')} aria-pressed={!disabledPredicates.has(predicate)} onClick={() => setDisabledPredicates((current) => {
-                                    const next = new Set(current)
-                                    if (next.has(predicate)) next.delete(predicate); else next.add(predicate)
-                                    return next
-                                })}>{propertyName(predicate)}</button>
-                            ))}
+                            {[...predicates].map((predicate) => {
+                                const available = availablePredicates.has(predicate)
+                                const active = isPredicateActive(predicate)
+                                return (
+                                    <button key={predicate} type="button" className={[
+                                        'predicate-toggle',
+                                        incomingPredicates.has(predicate) ? 'incoming' : '',
+                                        active ? 'active' : '',
+                                    ].filter(Boolean).join(' ')} disabled={!available} aria-pressed={active} onClick={() => setDisabledPredicates((current) => {
+                                        const next = new Set(current)
+                                        if (next.has(predicate)) next.delete(predicate); else next.add(predicate)
+                                        return next
+                                    })}>{propertyName(predicate)}</button>
+                                )
+                            })}
                         </div>
                     </div>
                     {instancePropertiesError && <div className="notice error"><AlertCircle size={20} /><div><strong>Loading failed</strong><p>{instancePropertiesError}</p></div><button onClick={() => void loadInstanceProperties(selectedInstance)}>Try again</button></div>}
                     {instancePropertiesLoading && <div className="loading"><LoaderCircle className="spin" size={28} /><span>Loading instance data …</span></div>}
-                    {!instancePropertiesLoading && !instancePropertiesError && visibleProperties.length === 0 && <div className="empty"><Search size={30} /><strong>No properties selected</strong><span>Enable a predicate above to display its value.</span></div>}
+                    {!instancePropertiesLoading && !instancePropertiesError && visibleProperties.length === 0 && (
+                        <div className="empty">
+                            <Search size={30} />
+                            {availablePredicates.size > 0
+                                ? <><strong>No properties selected</strong><span>Enable a predicate above to display its value.</span></>
+                                : <strong>No properties found for this instance.</strong>}
+                        </div>
+                    )}
                     {!instancePropertiesLoading && !instancePropertiesError && visibleProperties.length > 0 && <div className="instance-data-list">
                         {visibleProperties.map((property) => {
                             const relatedResource = property.direction === 'incoming' ? property.subject : property.object

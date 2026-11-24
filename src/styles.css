@@ -180,10 +180,10 @@ footer { color: #9ca8b6; font: 10px 'DM Mono', monospace; text-align: right; mar
 .instance-filter-panel .eyebrow { margin-bottom: 8px; }
 .predicate-toggles { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 17px; }
 .predicate-toggle { border: 1px solid #dce3ec; border-radius: 99px; background: #f8fafc; color: #718095; padding: 7px 11px; cursor: pointer; font: 10px 'DM Mono', monospace; }
-.predicate-toggle:hover { border-color: #9cafc4; color: #315a86; }
+.predicate-toggle:hover:not(:disabled) { border-color: #9cafc4; color: #315a86; }
+.predicate-toggle:disabled { cursor: default; }
 .predicate-toggle.active { border-color: #87ad52; background: #ebf5d8; color: #557034; }
-.predicate-toggle.incoming { border-color: #a9d8ec; background: #eefaff; color: #3f7894; }
-.predicate-toggle.incoming:hover { border-color: #79bfdc; color: #2f6682; }
+.predicate-toggle.incoming.active:hover { border-color: #79bfdc; color: #2f6682; }
 .predicate-toggle.incoming.active { border-color: #65b3d3; background: #dff4fc; color: #285d78; }
 .instance-data-list { display: grid; gap: 8px; }
 .blank-node { min-width: 0; overflow-wrap: anywhere; }
