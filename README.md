@@ -20,13 +20,17 @@ export INITIAL_ADMIN_PASSWORD='admin'
 npm run dev:server
 ```
 
-During development, the browser sends API requests to the Vite server, which
-proxies them to `http://localhost:3001` by default. If the API runs on a
+During development, the browser sends API requests under `/HEO-Explorer/api/`.
+Vite strips `/HEO-Explorer` and proxies them to `http://localhost:3001` by default. If the API runs on a
 different port, set the proxy target when starting Vite:
 
 ```bash
 VITE_API_BASE_URL=http://127.0.0.1:3002 npm run dev
 ```
+
+When running the Vite dev server behind an HTTPS reverse proxy, forward
+`/HEO-Explorer/` to Vite with the path intact. Enable WebSocket upgrades on
+that same path for hot reload.
 
 For a separately hosted frontend and backend, use the public backend URL:
 
