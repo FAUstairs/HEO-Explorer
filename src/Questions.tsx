@@ -1,3 +1,4 @@
+import { authenticatedFetch } from './api'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
     moduleProgrammesQuery, programmeModuleNamesQuery, programmePortfoliosQuery, regulationCatalogueQuery,
@@ -255,12 +256,9 @@ function ResultsTable({ rows, columnLabel, countColumn, renderLabel, formatCount
 }
 
 async function queryRows<Row>({ endpoint, token }: QueryConnection, query: string, signal?: AbortSignal): Promise<Row[]> {
-    const response = await fetch(endpoint, {
+    const response = await authenticatedFetch(endpoint, token, {
         method: 'POST',
-        headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
-        },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
         body: new URLSearchParams({ query }),
         signal,
     })

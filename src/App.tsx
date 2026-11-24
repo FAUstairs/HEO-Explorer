@@ -3,7 +3,7 @@ import { AlertCircle, ArrowLeft, CheckCircle2, ChevronLeft, ChevronRight, Extern
 import TBox from './TBox'
 import Diagram from './Diagram'
 import Questions from './Questions'
-import { apiUrl } from './api'
+import { apiUrl, authenticatedFetch, sessionExpiry, watchRejectedSession } from './api'
 
 const QUERY_ENDPOINT = apiUrl('/api/query')
 const EXAMPLE_SPARQL_QUERY = `PREFIX heo: <https://mathhub.info/heo#>
@@ -140,10 +140,6 @@ function sparqlIri(iri: string): string {
 
 function sparqlString(value: string): string {
     return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\r?\n/g, '\\n')}"`
-}
-
-function authenticatedHeaders(token: string | null): Record<string, string> {
-    return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
 type AppView = 'classes' | 'class' | 'instance' | 'tbox' | 'instances' | 'diagram' | 'subclasses' | 'sparql' | 'modules'
@@ -508,6 +504,7 @@ function App() {
     const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
     const [heoQueryEndpoint, setHeoQueryEndpoint] = useState('Loading …')
     const [token, setToken] = useState(() => localStorage.getItem('heo-admin-token'))
+    const activeToken = useRef(token)
     const [loginError, setLoginError] = useState<string | null>(null)
     const [loggingIn, setLoggingIn] = useState(false)
     const restoredUrl = useRef(false)
@@ -532,6 +529,7 @@ function App() {
             const data = await response.json() as { token?: string; error?: string }
             if (!response.ok || !data.token) throw new Error(data.error ?? 'Login failed.')
             localStorage.setItem('heo-admin-token', data.token)
+            activeToken.current = data.token
             setToken(data.token)
         } catch (cause) {
             setLoginError(cause instanceof Error ? cause.message : 'Login failed.')
@@ -541,9 +539,13 @@ function App() {
 
     }
 
-    function logout() {
-        localStorage.removeItem('heo-admin-token')
+    const logout = useCallback(() => {
+        if (localStorage.getItem('heo-admin-token') === activeToken.current) {
+            localStorage.removeItem('heo-admin-token')
+        }
+        activeToken.current = null
         setToken(null)
+        setLoginError(null)
         setSelectedClass(null)
         setSelectedInstance(null)
         setShowDiagram(false)
@@ -551,16 +553,41 @@ function App() {
         setShowTBox(false)
         setShowGlobalInstances(false)
         navigateTo('classes')
-    }
+    }, [navigateTo])
+
+    useEffect(() => {
+        if (!token) return
+
+        const expireSession = () => {
+            // An older request can finish after a newer login.
+            if (activeToken.current !== token) return
+            logout()
+            setLoginError('Your session has ended. Please sign in again.')
+        }
+        const unwatch = watchRejectedSession((rejectedToken) => {
+            if (rejectedToken === token) expireSession()
+        })
+        const expiresAt = sessionExpiry(token)
+        const checkExpiry = () => {
+            if (expiresAt !== undefined && expiresAt <= Date.now()) expireSession()
+        }
+        const timer = expiresAt === undefined ? undefined : window.setTimeout(checkExpiry, Math.max(0, expiresAt - Date.now()))
+        document.addEventListener('visibilitychange', checkExpiry)
+        return () => {
+            unwatch()
+            window.clearTimeout(timer)
+            document.removeEventListener('visibilitychange', checkExpiry)
+        }
+    }, [logout, token])
 
     const loadClasses = useCallback(async () => {
         const requestId = ++classRequestId.current
         setLoading(true)
         setError(null)
         try {
-            const response = await fetch(QUERY_ENDPOINT, {
+            const response = await authenticatedFetch(QUERY_ENDPOINT, token, {
                 method: 'POST',
-                headers: { ...authenticatedHeaders(token), 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
                 body: new URLSearchParams({ query: ontologyQuery(namespace) }),
             })
             if (!response.ok) throw new Error(`The ontology service returned HTTP ${response.status}.`)
@@ -591,19 +618,19 @@ function App() {
         setInstancesLoading(true)
         try {
             const [propertyResponse, instanceResponse, hierarchyResponse] = await Promise.all([
-                fetch(QUERY_ENDPOINT, {
+                authenticatedFetch(QUERY_ENDPOINT, token, {
                     method: 'POST',
-                    headers: { ...authenticatedHeaders(token), 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
                     body: new URLSearchParams({ query: propertyQuery(item.iri) }),
                 }),
-                fetch(QUERY_ENDPOINT, {
+                authenticatedFetch(QUERY_ENDPOINT, token, {
                     method: 'POST',
-                    headers: { ...authenticatedHeaders(token), 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
                     body: new URLSearchParams({ query: instanceQuery(item.iri, instancePageSize, 0, '') }),
                 }),
-                fetch(QUERY_ENDPOINT, {
+                authenticatedFetch(QUERY_ENDPOINT, token, {
                     method: 'POST',
-                    headers: { ...authenticatedHeaders(token), 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
                     body: new URLSearchParams({ query: classHierarchyQuery(item.iri) }),
                 }),
             ])
@@ -642,9 +669,9 @@ function App() {
         setInstancesLoading(true)
         setInstancesError(null)
         try {
-            const response = await fetch(QUERY_ENDPOINT, {
+            const response = await authenticatedFetch(QUERY_ENDPOINT, token, {
                 method: 'POST',
-                headers: { ...authenticatedHeaders(token), 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
                 body: new URLSearchParams({ query: instanceQuery(classIri, pageSize, page * pageSize, search) }),
             })
             if (!response.ok) throw new Error(`The ontology service returned HTTP ${response.status}.`)
@@ -664,9 +691,9 @@ function App() {
         setGlobalInstancesLoading(true)
         setGlobalInstancesError(null)
         try {
-            const response = await fetch(QUERY_ENDPOINT, {
+            const response = await authenticatedFetch(QUERY_ENDPOINT, token, {
                 method: 'POST',
-                headers: { ...authenticatedHeaders(token), 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
                 body: new URLSearchParams({ query: allInstancesQuery(pageSize, page * pageSize, search) }),
             })
             if (!response.ok) throw new Error(`The ontology service returned HTTP ${response.status}.`)
@@ -686,9 +713,9 @@ function App() {
         setInstancePropertiesLoading(true)
         setInstancePropertiesError(null)
         try {
-            const response = await fetch(QUERY_ENDPOINT, {
+            const response = await authenticatedFetch(QUERY_ENDPOINT, token, {
                 method: 'POST',
-                headers: { ...authenticatedHeaders(token), 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
                 body: new URLSearchParams({ query: instancePropertyQuery(instance.iri) }),
             })
             if (!response.ok) throw new Error(`The ontology service returned HTTP ${response.status}.`)
@@ -712,9 +739,9 @@ function App() {
         setResourcePreviewError(null)
         setResourcePreviewLoading(true)
         try {
-            const response = await fetch(QUERY_ENDPOINT, {
+            const response = await authenticatedFetch(QUERY_ENDPOINT, token, {
                 method: 'POST',
-                headers: { ...authenticatedHeaders(token), 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
                 body: new URLSearchParams({ query: resourcePreviewQuery(resource.iri) }),
             })
             if (!response.ok) throw new Error(`The ontology service returned HTTP ${response.status}.`)
@@ -780,7 +807,7 @@ function App() {
 
     useEffect(() => {
         if (!token) return
-        void fetch(apiUrl('/api/config'), { headers: authenticatedHeaders(token) })
+        void authenticatedFetch(apiUrl('/api/config'), token)
             .then(async (response) => {
                 if (!response.ok) throw new Error(`The configuration service returned HTTP ${response.status}.`)
                 const data = await response.json() as { heoQueryEndpoint?: string }
@@ -935,9 +962,9 @@ function App() {
         try {
             const query = sparqlQuery.trim()
             if (!query) throw new Error('Please enter a SPARQL query.')
-            const response = await fetch(QUERY_ENDPOINT, {
+            const response = await authenticatedFetch(QUERY_ENDPOINT, token, {
                 method: 'POST',
-                headers: { ...authenticatedHeaders(token), 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
                 body: new URLSearchParams({ query }),
             })
             if (!response.ok) throw new Error(`The SPARQL endpoint responded with HTTP ${response.status}.`)

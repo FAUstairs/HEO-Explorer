@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { AlertCircle, ArrowLeft, LoaderCircle, LogOut, RefreshCw } from 'lucide-react'
-import { apiUrl } from './api'
+import { apiUrl, authenticatedFetch } from './api'
 import './tbox.css'
 
 const QUERY_ENDPOINT = apiUrl('/api/query')
@@ -99,9 +99,9 @@ function parseTriples(payload: unknown): Triple[] {
 }
 
 async function loadTriples(token: string): Promise<Triple[]> {
-  const response = await fetch(QUERY_ENDPOINT, {
+  const response = await authenticatedFetch(QUERY_ENDPOINT, token, {
     method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
     body: new URLSearchParams({ query: TBOX_QUERY }),
   })
   if (!response.ok) throw new Error(`The ontology service returned HTTP ${response.status}.`)

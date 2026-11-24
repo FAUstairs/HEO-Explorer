@@ -1,3 +1,4 @@
+import { authenticatedFetch } from './api'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import ELK from 'elkjs/lib/elk.bundled.js'
 import type { ElkNode } from 'elkjs/lib/elk-api.js'
@@ -121,16 +122,16 @@ export default function Diagram({ endpoint, token, classes, mode = 'properties',
         setError(null)
         try {
             const requests = [
-                fetch(endpoint, {
+                authenticatedFetch(endpoint, token, {
                     method: 'POST',
-                    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
                     body: new URLSearchParams({ query: mode === 'subclasses' ? subclassQuery : propertyQuery }),
                 }),
             ]
             if (mode === 'subclasses') {
-                requests.push(fetch(endpoint, {
+                requests.push(authenticatedFetch(endpoint, token, {
                     method: 'POST',
-                    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
                     body: new URLSearchParams({ query: propertyQuery }),
                 }))
             }
