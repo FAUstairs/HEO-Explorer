@@ -38,3 +38,5 @@
   .tbox-class-list code span { display: block; margin-top: 5px; text-align: left; }
   .tbox-triple { grid-template-columns: 1fr; gap: 6px; }
 }
+
+.tbox-namespace-tabs { width: fit-content; margin-bottom: 16px; }

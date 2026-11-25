@@ -1,3 +1,4 @@
+import { classNamespaces, type ClassNamespace } from './classNamespaces'
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { AlertCircle, ArrowLeft, CheckCircle2, ChevronLeft, ChevronRight, ExternalLink, LoaderCircle, RefreshCw, Search, XCircle } from 'lucide-react'
 import TBox from './TBox'
@@ -23,13 +24,7 @@ SELECT DISTINCT ?personName ?moduleName WHERE {
   BIND(CONCAT(STR(?firstName), " ", STR(?lastName)) AS ?personName)
 }
 ORDER BY LCASE(STR(?personName))`
-const classNamespaces = {
-    HEO: 'https://mathhub.info/heo#',
-    ULO: 'http://mathhub.info/ulo#',
-} as const
 const MATHHUB_ORIGIN = 'https://mathhub.info'
-
-type ClassNamespace = keyof typeof classNamespaces
 
 const ontologyQuery = (namespace: ClassNamespace) => `
 PREFIX ontology: <${classNamespaces[namespace]}>
@@ -460,6 +455,7 @@ function parseResourcePreview(payload: unknown): ResourcePreviewProperty[] {
 
 function App() {
     const [namespace, setNamespace] = useState<ClassNamespace>('HEO')
+    const [diagramNamespace, setDiagramNamespace] = useState<ClassNamespace>('HEO')
     const [heoClasses, setHeoClasses] = useState<HeoClass[]>([])
     const [uloClasses, setUloClasses] = useState<HeoClass[]>([])
     const classes = namespace === 'HEO' ? heoClasses : uloClasses
@@ -494,6 +490,7 @@ function App() {
         return null
     })
     const [showDiagram, setShowDiagram] = useState(false)
+    const loadedClassNamespace = showDiagram ? diagramNamespace : namespace
     const [showSparql, setShowSparql] = useState(false)
     const [sparqlQuery, setSparqlQuery] = useState(EXAMPLE_SPARQL_QUERY)
     const [sparqlResult, setSparqlResult] = useState<unknown>(null)
@@ -626,12 +623,12 @@ function App() {
             const response = await authenticatedFetch(QUERY_ENDPOINT, token, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-                body: new URLSearchParams({ query: ontologyQuery(namespace) }),
+                body: new URLSearchParams({ query: ontologyQuery(loadedClassNamespace) }),
             })
             if (!response.ok) throw new Error(`The ontology service returned HTTP ${response.status}.`)
-            const rows = parseRows(await response.json(), namespace)
+            const rows = parseRows(await response.json(), loadedClassNamespace)
             if (requestId !== classRequestId.current) return
-            if (namespace === 'HEO') setHeoClasses(rows)
+            if (loadedClassNamespace === 'HEO') setHeoClasses(rows)
             else setUloClasses(rows)
             setLastUpdated(new Date())
         } catch (cause) {
@@ -639,7 +636,7 @@ function App() {
         } finally {
             if (requestId === classRequestId.current) setLoading(false)
         }
-    }, [namespace, token])
+    }, [loadedClassNamespace, token])
 
     const showProperties = useCallback(async (item: HeoClass, updateUrl = true) => {
         if (updateUrl) navigateTo('class', { iri: item.iri })
@@ -690,7 +687,8 @@ function App() {
     }, [instancePageSize, navigateTo, token])
 
     const openClassResource = useCallback((classIri: string) => {
-        const classFromList = classes.find((item) => item.iri === classIri)
+        const classList = classIri.startsWith(classNamespaces.ULO) ? uloClasses : heoClasses
+        const classFromList = classList.find((item) => item.iri === classIri)
         const classForView = classFromList ?? {
             iri: classIri,
             notation: localName(classIri),
@@ -700,7 +698,7 @@ function App() {
         setSelectedInstance(null)
         setInstanceHistory([])
         void showProperties(classForView)
-    }, [classes, showProperties])
+    }, [heoClasses, uloClasses, showProperties])
 
     const loadInstances = useCallback(async (classIri: string, page: number, pageSize: number, search = instanceSearch) => {
         const requestId = ++instanceRequestId.current
@@ -1082,12 +1080,18 @@ function App() {
 
     if (showDiagram) {
         return <Diagram
+            key={diagramNamespace}
+            namespace={diagramNamespace}
+            onChangeNamespace={setDiagramNamespace}
             endpoint={QUERY_ENDPOINT}
             token={token}
             onLogout={logout}
             onAdmin={openAdmin}
             onChangePassword={openPasswordChange}
-            classes={heoClasses}
+            classes={diagramNamespace === 'HEO' ? heoClasses : uloClasses}
+            classesLoading={loading}
+            classesError={error}
+            onReloadClasses={loadClasses}
             mode={diagramMode}
             onBack={goHome}
             onChangeMode={(mode) => {

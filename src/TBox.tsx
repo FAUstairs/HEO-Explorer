@@ -2,14 +2,14 @@ import ExplorerHeader from './ExplorerHeader'
 import { useEffect, useState } from 'react'
 import { AlertCircle, ArrowLeft, LoaderCircle, RefreshCw } from 'lucide-react'
 import { apiUrl, authenticatedFetch } from './api'
+import { classNamespaces, type ClassNamespace } from './classNamespaces'
 import './tbox.css'
 
 const QUERY_ENDPOINT = apiUrl('/api/query')
-const HEO_NAMESPACE = 'https://mathhub.info/heo#'
 const RDF_TYPE = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type'
 const RDFS_SUBCLASS = 'http://www.w3.org/2000/01/rdf-schema#subClassOf'
 const OWL_CLASS = 'http://www.w3.org/2002/07/owl#Class'
-const OWL_RESTRICTION = 'http://www.w3.org/2002/07/owl#Restriction'
+const RDFS_CLASS = 'http://www.w3.org/2000/01/rdf-schema#Class'
 const OWL_ON_PROPERTY = 'http://www.w3.org/2002/07/owl#onProperty'
 const OWL_SOME_VALUES_FROM = 'http://www.w3.org/2002/07/owl#someValuesFrom'
 const OWL_ALL_VALUES_FROM = 'http://www.w3.org/2002/07/owl#allValuesFrom'
@@ -32,19 +32,19 @@ type Property = {
   ranges: string[]
 }
 
-const TBOX_QUERY = `
+const tboxQuery = (namespace: ClassNamespace) => `
 PREFIX owl: <http://www.w3.org/2002/07/owl#>
 PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-PREFIX heo: <${HEO_NAMESPACE}>
+PREFIX ontology: <${classNamespaces[namespace]}>
 
 SELECT DISTINCT ?subject ?predicate ?object
 WHERE {
   {
     ?subject a ?resourceType .
-    VALUES ?resourceType { owl:Class owl:DatatypeProperty owl:ObjectProperty }
+    VALUES ?resourceType { owl:Class rdfs:Class owl:DatatypeProperty owl:ObjectProperty }
     ?subject ?predicate ?object .
-    FILTER(STRSTARTS(STR(?subject), STR(heo:)))
+    FILTER(STRSTARTS(STR(?subject), STR(ontology:)))
     VALUES ?predicate {
       rdf:type
       rdfs:domain
@@ -55,13 +55,13 @@ WHERE {
   }
   UNION {
     ?subject rdfs:subClassOf ?object .
-    FILTER(STRSTARTS(STR(?subject), STR(heo:)))
+    FILTER(STRSTARTS(STR(?subject), STR(ontology:)))
     BIND(rdfs:subClassOf AS ?predicate)
   }
   UNION {
     ?class rdfs:subClassOf ?subject .
     ?subject ?predicate ?object .
-    FILTER(STRSTARTS(STR(?class), STR(heo:)))
+    FILTER(STRSTARTS(STR(?class), STR(ontology:)))
     VALUES ?predicate {
       owl:onProperty
       owl:someValuesFrom
@@ -99,11 +99,12 @@ function parseTriples(payload: unknown): Triple[] {
   })).filter((triple) => triple.subject && triple.predicate && triple.object)
 }
 
-async function loadTriples(token: string): Promise<Triple[]> {
+async function loadTriples(token: string, namespace: ClassNamespace, signal: AbortSignal): Promise<Triple[]> {
   const response = await authenticatedFetch(QUERY_ENDPOINT, token, {
     method: 'POST',
+    signal,
     headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-    body: new URLSearchParams({ query: TBOX_QUERY }),
+    body: new URLSearchParams({ query: tboxQuery(namespace) }),
   })
   if (!response.ok) throw new Error(`The ontology service returned HTTP ${response.status}.`)
   return parseTriples(await response.json())
@@ -122,28 +123,39 @@ export default function TBox({ token, onLogout, onChangePassword, onAdmin, onBac
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  async function refresh() {
+  const [namespace, setNamespace] = useState<ClassNamespace>('HEO')
+  const [reload, setReload] = useState(0)
+
+  function refresh() {
     setLoading(true)
     setError(null)
-    try {
-      setTriples(await loadTriples(token))
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'The TBox could not be loaded.')
-    } finally {
-      setLoading(false)
-    }
+    setReload((count) => count + 1)
   }
 
   useEffect(() => {
-    void refresh()
-  }, [token])
+    const controller = new AbortController()
+    const { signal } = controller
+    setLoading(true)
+    setError(null)
+    void loadTriples(token, namespace, signal)
+      .then((result) => {
+        if (!signal.aborted) setTriples(result)
+      })
+      .catch((cause) => {
+        if (!signal.aborted) setError(cause instanceof Error ? cause.message : 'The TBox could not be loaded.')
+      })
+      .finally(() => {
+        if (!signal.aborted) setLoading(false)
+      })
+    return () => controller.abort()
+  }, [namespace, reload, token])
 
+  const namespaceIri = classNamespaces[namespace]
   const classes = [...new Set(triples.flatMap(({ subject, predicate, object }) => {
-    if (predicate === RDF_TYPE && object === OWL_CLASS) return [subject]
-    if (predicate === RDFS_SUBCLASS
-      && object.startsWith(HEO_NAMESPACE)) return [subject, object]
+    if (predicate === RDF_TYPE && (object === OWL_CLASS || object === RDFS_CLASS)) return [subject]
+    if (predicate === RDFS_SUBCLASS) return [subject, object]
     return []
-  }))].sort()
+  }).filter((iri) => iri.startsWith(namespaceIri)))].sort()
   const properties = [...new Map(triples
     .filter(({ predicate, object }) =>
       predicate === 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type'
@@ -186,17 +198,27 @@ export default function TBox({ token, onLogout, onChangePassword, onAdmin, onBac
     <main className="shell tbox-page">
       <ExplorerHeader onHome={onBack} onAdmin={onAdmin} onLogout={onLogout} onChangePassword={onChangePassword} title="TBox">
         {onBack && <button className="refresh-button" onClick={onBack}><ArrowLeft size={16} /> Back to classes</button>}
-        <button className="refresh-button" onClick={() => void refresh()} disabled={loading}>
+        <button className="refresh-button" onClick={refresh} disabled={loading}>
           <RefreshCw size={16} className={loading ? 'spin' : ''} /> Refresh
         </button>
       </ExplorerHeader>
 
       <section className="property-page">
         <p className="eyebrow">Terminological box</p>
-        <h1>HEO ontology TBox</h1>
+        <h1>{namespace} ontology TBox</h1>
         <p className="intro">Classes and all triples that define their datatype properties, object properties and subclass relations.</p>
+        <div className="diagram-tabs tbox-namespace-tabs" role="group" aria-label="Ontology namespace">
+          {(['HEO', 'ULO'] as const).map((option) => (
+            <button key={option} className={namespace === option ? 'active' : ''} aria-pressed={namespace === option} onClick={() => {
+              if (option === namespace) return
+              setLoading(true)
+              setError(null)
+              setNamespace(option)
+            }}>{option}</button>
+          ))}
+        </div>
 
-        {error && <div className="notice error"><AlertCircle size={20} /><div><strong>Loading failed</strong><p>{error}</p></div><button onClick={() => void refresh()}>Try again</button></div>}
+        {error && <div className="notice error"><AlertCircle size={20} /><div><strong>Loading failed</strong><p>{error}</p></div><button onClick={refresh}>Try again</button></div>}
         {loading && <div className="loading"><LoaderCircle className="spin" size={28} /><span>Loading TBox triples …</span></div>}
 
         {!loading && !error && <>

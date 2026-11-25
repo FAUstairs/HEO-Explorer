@@ -1,3 +1,4 @@
+import { classNamespaces, type ClassNamespace } from './classNamespaces'
 import ExplorerHeader from './ExplorerHeader'
 import { authenticatedFetch } from './api'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
@@ -41,20 +42,25 @@ function fitDiagram(canvas: Size, viewport: Size) {
 }
 
 type DiagramProps = {
+    namespace: ClassNamespace
+    onChangeNamespace: (namespace: ClassNamespace) => void
     endpoint: string
     token: string
     onLogout: () => void
     onChangePassword: () => void
     onAdmin?: () => void
     classes: HeoClass[]
+    classesLoading: boolean
+    classesError: string | null
+    onReloadClasses: () => Promise<void>
     mode?: 'properties' | 'subclasses'
     onBack: () => void
     onOpenClass: (classIri: string) => void
     onChangeMode: (mode: 'properties' | 'subclasses') => void
 }
 
-const propertyQuery = `
-PREFIX heo: <https://mathhub.info/heo#>
+const propertyQuery = (namespace: ClassNamespace) => `
+PREFIX ontology: <${classNamespaces[namespace]}>
 PREFIX owl: <http://www.w3.org/2002/07/owl#>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 
@@ -62,21 +68,21 @@ SELECT DISTINCT ?property ?propertyLabel ?propertyComment ?propertyType ?domain 
   ?property a ?propertyType ;
             rdfs:domain ?domain .
   VALUES ?propertyType { owl:DatatypeProperty owl:ObjectProperty }
-  FILTER(STRSTARTS(STR(?domain), STR(heo:)))
+  FILTER(STRSTARTS(STR(?domain), STR(ontology:)))
   OPTIONAL { ?property rdfs:label ?propertyLabel . }
   OPTIONAL { ?property rdfs:comment ?propertyComment . }
   OPTIONAL { ?property rdfs:range ?range . }
 }
 ORDER BY STR(?domain) STR(?property)`
 
-const subclassQuery = `
-PREFIX heo: <https://mathhub.info/heo#>
+const subclassQuery = (namespace: ClassNamespace) => `
+PREFIX ontology: <${classNamespaces[namespace]}>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 
 SELECT DISTINCT ?domain ?range ?propertyComment WHERE {
   ?domain rdfs:subClassOf ?range .
-  FILTER(STRSTARTS(STR(?domain), STR(heo:)))
-  FILTER(STRSTARTS(STR(?range), STR(heo:)))
+  FILTER(STRSTARTS(STR(?domain), STR(ontology:)))
+  FILTER(STRSTARTS(STR(?range), STR(ontology:)))
   OPTIONAL { <http://www.w3.org/2000/01/rdf-schema#subClassOf> rdfs:comment ?propertyComment . }
 }
 ORDER BY STR(?range) STR(?domain)`
@@ -114,11 +120,11 @@ function parseEdges(payload: unknown, mode: 'properties' | 'subclasses'): Diagra
     return [...unique.values()]
 }
 
-export default function Diagram({ endpoint, token, classes, mode = 'properties', onLogout, onChangePassword, onAdmin, onBack, onOpenClass, onChangeMode }: DiagramProps) {
+export default function Diagram({ namespace, onChangeNamespace, endpoint, token, classes, classesLoading, classesError, onReloadClasses, mode = 'properties', onLogout, onChangePassword, onAdmin, onBack, onOpenClass, onChangeMode }: DiagramProps) {
     const [edges, setEdges] = useState<DiagramEdge[]>([])
     const [literalEdges, setLiteralEdges] = useState<DiagramEdge[]>([])
-    const [loading, setLoading] = useState(true)
-    const [error, setError] = useState<string | null>(null)
+    const [edgesLoading, setLoading] = useState(true)
+    const [edgesError, setError] = useState<string | null>(null)
     const [manualViews, setManualViews] = useState<Record<'properties' | 'subclasses', DiagramView | null>>({
         properties: null,
         subclasses: null,
@@ -130,23 +136,27 @@ export default function Diagram({ endpoint, token, classes, mode = 'properties',
     const panStart = useRef<{ pointerX: number; pointerY: number; x: number; y: number } | null>(null)
     const diagramViewport = useRef<HTMLDivElement | null>(null)
     const [viewportSize, setViewportSize] = useState<Size | null>(null)
+    const loading = classesLoading || edgesLoading
+    const error = classesError ?? edgesError
 
-    const loadDiagram = async () => {
+    const loadDiagram = async (signal?: AbortSignal) => {
         setLoading(true)
         setError(null)
         try {
             const requests = [
                 authenticatedFetch(endpoint, token, {
                     method: 'POST',
+                    signal,
                     headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-                    body: new URLSearchParams({ query: mode === 'subclasses' ? subclassQuery : propertyQuery }),
+                    body: new URLSearchParams({ query: mode === 'subclasses' ? subclassQuery(namespace) : propertyQuery(namespace) }),
                 }),
             ]
             if (mode === 'subclasses') {
                 requests.push(authenticatedFetch(endpoint, token, {
                     method: 'POST',
+                    signal,
                     headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-                    body: new URLSearchParams({ query: propertyQuery }),
+                    body: new URLSearchParams({ query: propertyQuery(namespace) }),
                 }))
             }
             const responses = await Promise.all(requests)
@@ -154,16 +164,22 @@ export default function Diagram({ endpoint, token, classes, mode = 'properties',
                 throw new Error('The ontology service could not load the diagram data.')
             }
             const payloads = await Promise.all(responses.map((response) => response.json()))
+            if (signal?.aborted) return
             setEdges(parseEdges(payloads[0], mode))
             setLiteralEdges(mode === 'subclasses' ? parseEdges(payloads[1], 'properties') : parseEdges(payloads[0], 'properties'))
         } catch (cause) {
+            if (signal?.aborted) return
             setError(cause instanceof Error ? cause.message : 'The diagram could not be loaded.')
         } finally {
-            setLoading(false)
+            if (!signal?.aborted) setLoading(false)
         }
     }
 
-    useEffect(() => { void loadDiagram() }, [mode])
+    useEffect(() => {
+        const controller = new AbortController()
+        void loadDiagram(controller.signal)
+        return () => controller.abort()
+    }, [endpoint, mode, namespace, token])
 
     const classMap = useMemo(() => new Map(classes.map((item) => [item.iri, item])), [classes])
     const edgeId = (edge: DiagramEdge) => `edge-${edge.domain}-${edge.range}-${edge.property}`
@@ -181,9 +197,10 @@ export default function Diagram({ endpoint, token, classes, mode = 'properties',
     const [layout, setLayout] = useState<{ nodes: Map<string, LayoutPoint>; edges: Map<string, LayoutEdge>; width: number; height: number } | null>(null)
     useEffect(() => {
         let cancelled = false
+        if (loading || error) return
         const elk = new ELK()
         const graph: ElkNode = {
-            id: 'heo',
+            id: namespace,
             layoutOptions: {
                 'elk.algorithm': 'layered',
                 'elk.direction': 'DOWN',
@@ -217,7 +234,7 @@ export default function Diagram({ endpoint, token, classes, mode = 'properties',
             if (!cancelled) setLayout(null)
         })
         return () => { cancelled = true }
-    }, [classes, visibleEdges])
+    }, [classes, error, loading, namespace, visibleEdges])
     const diagramVisible = !loading && !error && layout !== null
     useLayoutEffect(() => {
         const viewport = diagramViewport.current
@@ -288,8 +305,13 @@ export default function Diagram({ endpoint, token, classes, mode = 'properties',
             <section className="property-page diagram-page">
                 <button className="back-link" onClick={onBack}><ArrowLeft size={16} /> Back to all classes</button>
                 <div className="diagram-heading">
-                    <div><p className="eyebrow">Ontology map</p><h1>{mode === 'subclasses' ? 'Class hierarchy' : 'Classes & predicates'}</h1><p className="intro">{mode === 'subclasses' ? 'Explore the inheritance structure of HEO classes.' : 'Explore how HEO classes are connected through their predicates.'}</p></div>
+                    <div><p className="eyebrow">Ontology map</p><h1>{mode === 'subclasses' ? 'Class hierarchy' : 'Classes & predicates'}</h1><p className="intro">{mode === 'subclasses' ? `Explore the inheritance structure of ${namespace} classes.` : `Explore how ${namespace} classes are connected through their predicates.`}</p></div>
                     <div className="diagram-heading-actions">
+                        <div className="diagram-tabs" role="group" aria-label="Ontology namespace">
+                            {(['HEO', 'ULO'] as const).map((option) => (
+                                <button key={option} className={namespace === option ? 'active' : ''} aria-pressed={namespace === option} onClick={() => onChangeNamespace(option)}>{option}</button>
+                            ))}
+                        </div>
                         <div className="diagram-tabs" role="tablist" aria-label="Diagram views">
                             <button className={mode === 'properties' ? 'active' : ''} onClick={() => onChangeMode('properties')} role="tab" aria-selected={mode === 'properties'}>Properties</button>
                             <button className={mode === 'subclasses' ? 'active' : ''} onClick={() => onChangeMode('subclasses')} role="tab" aria-selected={mode === 'subclasses'}>Subclasses</button>
@@ -297,7 +319,10 @@ export default function Diagram({ endpoint, token, classes, mode = 'properties',
                         <div className="diagram-legend"><span><i className="legend-class" /> Class</span><span><i className="legend-line" /> {mode === 'subclasses' ? 'Subclass' : 'Predicate'}</span></div>
                     </div>
                 </div>
-                {error && <div className="notice error"><AlertCircle size={20} /><div><strong>Loading failed</strong><p>{error}</p></div><button onClick={() => void loadDiagram()}><RefreshCw size={14} /> Try again</button></div>}
+                {error && <div className="notice error"><AlertCircle size={20} /><div><strong>Loading failed</strong><p>{error}</p></div><button onClick={() => {
+                    if (classesError) void onReloadClasses()
+                    if (edgesError) void loadDiagram()
+                }}><RefreshCw size={14} /> Try again</button></div>}
                 {loading && <div className="loading"><LoaderCircle className="spin" size={28} /><span>Building ontology diagram …</span></div>}
                 {!loading && !error && <div className="diagram-summary"><span><strong>{classes.length}</strong> classes</span><span><strong>{visibleEdges.length}</strong> predicate connections</span></div>}
                 {!loading && !error && !layout && <div className="loading"><LoaderCircle className="spin" size={28} /><span>Calculating graph layout …</span></div>}
@@ -342,7 +367,7 @@ export default function Diagram({ endpoint, token, classes, mode = 'properties',
                             })
                         }}
                     >
-                    <svg className="ontology-diagram" style={{ transform: `translate(${pan.x}px, ${pan.y}px)`, visibility: fittedView ? undefined : 'hidden' }} width={canvasWidth * zoom} height={canvasHeight * zoom} viewBox={`0 0 ${canvasWidth} ${canvasHeight}`} role="img" aria-label="HEO class and predicate diagram">
+                    <svg className="ontology-diagram" style={{ transform: `translate(${pan.x}px, ${pan.y}px)`, visibility: fittedView ? undefined : 'hidden' }} width={canvasWidth * zoom} height={canvasHeight * zoom} viewBox={`0 0 ${canvasWidth} ${canvasHeight}`} role="img" aria-label={`${namespace} ${mode === 'subclasses' ? 'class hierarchy' : 'class and predicate diagram'}`}>
                         <defs>
                             <marker id="diagram-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="var(--diagram-edge, #86a4bd)" /></marker>
                         </defs>
