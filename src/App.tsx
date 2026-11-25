@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
-import { AlertCircle, ArrowLeft, CheckCircle2, ChevronLeft, ChevronRight, ExternalLink, LoaderCircle, LogOut, RefreshCw, Search, XCircle } from 'lucide-react'
+import { AlertCircle, ArrowLeft, CheckCircle2, ChevronLeft, ChevronRight, ExternalLink, LoaderCircle, RefreshCw, Search, XCircle } from 'lucide-react'
 import TBox from './TBox'
 import Diagram from './Diagram'
 import Questions from './Questions'
+import ModuleAnnotation from './ModuleAnnotation'
+import AdminRegistrations from './AdminRegistrations'
+import Registration from './Registration'
+import ExplorerHeader from './ExplorerHeader'
 import { apiUrl, authenticatedFetch, sessionExpiry, watchRejectedSession } from './api'
 
 const QUERY_ENDPOINT = apiUrl('/api/query')
@@ -142,7 +146,13 @@ function sparqlString(value: string): string {
     return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\r?\n/g, '\\n')}"`
 }
 
-type AppView = 'classes' | 'class' | 'instance' | 'tbox' | 'instances' | 'diagram' | 'subclasses' | 'sparql' | 'modules'
+type AuxiliaryView = 'modules' | 'admin' | 'module-annotation'
+
+function isAuxiliaryView(view: string): view is AuxiliaryView {
+    return view === 'modules' || view === 'admin' || view === 'module-annotation'
+}
+
+type AppView = 'classes' | 'class' | 'instance' | 'tbox' | 'instances' | 'diagram' | 'subclasses' | 'sparql' | AuxiliaryView
 
 function appUrl(view: AppView, values: Record<string, string> = {}): string {
     const url = new URL(window.location.href)
@@ -475,7 +485,12 @@ function App() {
     const [globalInstancesError, setGlobalInstancesError] = useState<string | null>(null)
     const [showGlobalInstances, setShowGlobalInstances] = useState(false)
     const [showTBox, setShowTBox] = useState(false)
-    const [showModules, setShowModules] = useState(() => window.location.pathname === appUrl('modules'))
+    const [auxiliaryView, setAuxiliaryView] = useState<AuxiliaryView | null>(() => {
+        if (window.location.pathname === appUrl('modules')) return 'modules'
+        if (window.location.pathname === appUrl('admin')) return 'admin'
+        if (window.location.pathname === appUrl('module-annotation')) return 'module-annotation'
+        return null
+    })
     const [showDiagram, setShowDiagram] = useState(false)
     const [showSparql, setShowSparql] = useState(false)
     const [sparqlQuery, setSparqlQuery] = useState(EXAMPLE_SPARQL_QUERY)
@@ -505,13 +520,15 @@ function App() {
     const [heoQueryEndpoint, setHeoQueryEndpoint] = useState('Loading …')
     const [token, setToken] = useState(() => localStorage.getItem('heo-admin-token'))
     const activeToken = useRef(token)
+    const [registering, setRegistering] = useState(false)
+    const [canManageUsers, setCanManageUsers] = useState(false)
     const [loginError, setLoginError] = useState<string | null>(null)
     const [loggingIn, setLoggingIn] = useState(false)
     const restoredUrl = useRef(false)
 
     const navigateTo = useCallback((view: AppView, values: Record<string, string> = {}) => {
         window.history.pushState({}, '', appUrl(view, values))
-        setShowModules(view === 'modules')
+        setAuxiliaryView(isAuxiliaryView(view) ? view : null)
         window.scrollTo(0, 0)
     }, [])
 
@@ -539,21 +556,32 @@ function App() {
 
     }
 
+    const goHome = useCallback(() => {
+        setSelectedClass(null)
+        setSelectedInstance(null)
+        setInstanceHistory([])
+        setShowDiagram(false)
+        setShowSparql(false)
+        setShowTBox(false)
+        setShowGlobalInstances(false)
+        setAuxiliaryView(null)
+        if (window.location.pathname + window.location.search === appUrl('classes')) {
+            window.scrollTo(0, 0)
+        } else {
+            navigateTo('classes')
+        }
+    }, [navigateTo])
+
     const logout = useCallback(() => {
         if (localStorage.getItem('heo-admin-token') === activeToken.current) {
             localStorage.removeItem('heo-admin-token')
         }
         activeToken.current = null
         setToken(null)
+        setCanManageUsers(false)
         setLoginError(null)
-        setSelectedClass(null)
-        setSelectedInstance(null)
-        setShowDiagram(false)
-        setShowSparql(false)
-        setShowTBox(false)
-        setShowGlobalInstances(false)
-        navigateTo('classes')
-    }, [navigateTo])
+        goHome()
+    }, [goHome])
 
     useEffect(() => {
         if (!token) return
@@ -811,10 +839,12 @@ function App() {
         void authenticatedFetch(apiUrl('/api/config'), token)
             .then(async (response) => {
                 if (!response.ok) throw new Error(`The configuration service returned HTTP ${response.status}.`)
-                const data = await response.json() as { heoQueryEndpoint?: string }
+                const data = await response.json() as { heoQueryEndpoint?: string; canManageUsers?: boolean }
+                if (activeToken.current !== token) return
+                setCanManageUsers(data.canManageUsers === true)
                 setHeoQueryEndpoint(data.heoQueryEndpoint ?? 'Unknown')
             })
-            .catch(() => setHeoQueryEndpoint('Unavailable'))
+            .catch(() => { if (activeToken.current === token) setHeoQueryEndpoint('Unavailable') })
     }, [token])
 
     useEffect(() => {
@@ -830,8 +860,9 @@ function App() {
             const routePath = url.pathname.startsWith(`${basePath}/`)
                 ? url.pathname.slice(basePath.length)
                 : url.pathname
-            setShowModules(routePath === '/modules')
-            if (routePath === '/modules') {
+            const view = routePath.slice(1)
+            setAuxiliaryView(isAuxiliaryView(view) ? view : null)
+            if (isAuxiliaryView(view)) {
                 setShowTBox(false)
                 setShowDiagram(false)
                 setShowSparql(false)
@@ -905,7 +936,7 @@ function App() {
             setShowDiagram(false)
             setShowGlobalInstances(false)
             void showProperties(classForView, false).then(() => {
-                if (routePath !== '/instance' || !instanceIri) return
+                if (routePath !== '/instance' || !instanceIri || window.location.href !== url.href) return
                 const instance: HeoInstance = {
                     iri: instanceIri,
                     label: localName(instanceIri),
@@ -945,15 +976,22 @@ function App() {
     const classesWithInstances = classes.filter((item) => item.instanceCount > 0).length
 
     if (!token) {
+        if (registering) return <Registration onBack={() => setRegistering(false)} />
         return <main className="login-page"><form className="login-card" onSubmit={login}>
             <div className="brand"><span className="brand-mark">H</span><span>HEO <strong>Explorer</strong></span></div>
-            <p className="eyebrow">Admin access</p><h1>Sign in</h1>
-            <label>Username<input name="username" defaultValue="admin" autoComplete="username" required /></label>
-            <label>Password<input name="password" type="password" defaultValue="admin" autoComplete="current-password" required /></label>
-            {loginError && <p className="login-error">{loginError}</p>}
+            <h1>Sign in</h1>
+            <label>Email or username<input name="username" autoComplete="username" required /></label>
+            <label>Password<input name="password" type="password" autoComplete="current-password" required /></label>
+            {loginError && <p className="login-error" role="alert">{loginError}</p>}
             <button type="submit" disabled={loggingIn}>{loggingIn ? 'Signing in …' : 'Sign in'}</button>
+            <button type="button" className="login-switch" disabled={loggingIn} onClick={() => {
+                setLoginError(null)
+                setRegistering(true)
+            }}>Create an account</button>
         </form></main>
     }
+
+    const openAdmin = canManageUsers ? () => navigateTo('admin') : undefined
 
     async function executeSparql(event: FormEvent<HTMLFormElement>) {
         event.preventDefault()
@@ -977,16 +1015,17 @@ function App() {
         }
     }
 
-    if (showModules) {
+    if (auxiliaryView) {
         return (
             <main className="shell">
-                <header className="topbar">
-                    <div className="brand"><span className="brand-mark">H</span><span>HEO <strong>Explorer</strong></span></div>
-                    <div className="header-actions">
-                        <button className="refresh-button" onClick={() => navigateTo('classes')}><ArrowLeft size={16} /> Back to classes</button>
-                    </div>
-                </header>
-                <Questions endpoint={QUERY_ENDPOINT} token={token} />
+                <ExplorerHeader onHome={goHome} onAdmin={openAdmin} onLogout={logout}>
+                    <button className="refresh-button" onClick={goHome}><ArrowLeft size={16} /> Back to classes</button>
+                </ExplorerHeader>
+                {auxiliaryView === 'admin'
+                    ? <AdminRegistrations token={token} />
+                    : auxiliaryView === 'module-annotation'
+                        ? <ModuleAnnotation endpoint={QUERY_ENDPOINT} token={token} />
+                        : <Questions endpoint={QUERY_ENDPOINT} token={token} canManageSuggestions={canManageUsers} />}
             </main>
         )
     }
@@ -994,13 +1033,9 @@ function App() {
     if (showSparql) {
         return (
             <main className="shell">
-                <header className="topbar">
-                    <div className="brand"><span className="brand-mark">H</span><span>HEO <strong>Explorer</strong></span></div>
-                    <div className="header-actions">
-                        <button className="refresh-button" onClick={() => { setShowSparql(false); navigateTo('classes') }}><ArrowLeft size={16} /> Back to classes</button>
-                        <button className="refresh-button" onClick={logout}><LogOut size={16} /> Log out</button>
-                    </div>
-                </header>
+                <ExplorerHeader onHome={goHome} onAdmin={openAdmin} onLogout={logout}>
+                    <button className="refresh-button" onClick={() => { setShowSparql(false); navigateTo('classes') }}><ArrowLeft size={16} /> Back to classes</button>
+                </ExplorerHeader>
                 <section className="property-page sparql-page">
                     <button className="back-link" onClick={() => { setShowSparql(false); navigateTo('classes') }}><ArrowLeft size={16} /> Back to all classes</button>
                     <p className="eyebrow">Query console</p>
@@ -1025,7 +1060,7 @@ function App() {
     }
 
     if (showTBox) {
-        return <TBox token={token} onBack={() => { setShowTBox(false); navigateTo('classes') }} onLogout={logout} />
+        return <TBox token={token} onBack={goHome} onLogout={logout} onAdmin={openAdmin} />
     }
 
     if (showDiagram) {
@@ -1033,9 +1068,10 @@ function App() {
             endpoint={QUERY_ENDPOINT}
             token={token}
             onLogout={logout}
+            onAdmin={openAdmin}
             classes={heoClasses}
             mode={diagramMode}
-            onBack={() => { setShowDiagram(false); navigateTo('classes') }}
+            onBack={goHome}
             onChangeMode={(mode) => {
                 setDiagramMode(mode)
                 navigateTo(mode === 'subclasses' ? 'subclasses' : 'diagram')
@@ -1050,13 +1086,9 @@ function App() {
     if (showGlobalInstances) {
         return (
             <main className="shell">
-                <header className="topbar">
-                    <div className="brand"><span className="brand-mark">H</span><span>HEO <strong>Explorer</strong></span></div>
-                    <div className="header-actions">
-                        <button className="refresh-button" onClick={() => { setShowGlobalInstances(false); navigateTo('classes') }}><ArrowLeft size={16} /> Back to classes</button>
-                        <button className="refresh-button" onClick={logout}><LogOut size={16} /> Log out</button>
-                    </div>
-                </header>
+                <ExplorerHeader onHome={goHome} onAdmin={openAdmin} onLogout={logout}>
+                    <button className="refresh-button" onClick={() => { setShowGlobalInstances(false); navigateTo('classes') }}><ArrowLeft size={16} /> Back to classes</button>
+                </ExplorerHeader>
                 <section className="property-page">
                     <button className="back-link" onClick={() => { setShowGlobalInstances(false); navigateTo('classes') }}><ArrowLeft size={16} /> Back to all classes</button>
                     <p className="eyebrow">ABox explorer</p>
@@ -1143,13 +1175,9 @@ function App() {
         )
         return (
             <main className="shell">
-                <header className="topbar">
-                    <div className="brand"><span className="brand-mark">H</span><span>HEO <strong>Explorer</strong></span></div>
-                    <div className="header-actions">
-                        <button className="refresh-button" onClick={goBackFromInstance}><ArrowLeft size={16} /> Back</button>
-                        <button className="refresh-button" onClick={logout}><LogOut size={16} /> Log out</button>
-                    </div>
-                </header>
+                <ExplorerHeader onHome={goHome} onAdmin={openAdmin} onLogout={logout}>
+                    <button className="refresh-button" onClick={goBackFromInstance}><ArrowLeft size={16} /> Back</button>
+                </ExplorerHeader>
                 <section className="property-page">
                     <button className="back-link" onClick={goBackFromInstance}><ArrowLeft size={16} /> Back to {instanceHistory.length ? 'previous instance' : selectedClass.notation}</button>
                     <p className="eyebrow">ABox instance</p>
@@ -1292,15 +1320,11 @@ function App() {
     if (selectedClass) {
         return (
             <main className="shell">
-                <header className="topbar">
-                    <div className="brand"><span className="brand-mark">H</span><span>HEO <strong>Explorer</strong></span></div>
-                    <div className="header-actions">
-                        <button className="refresh-button" onClick={() => { setSelectedClass(null); navigateTo('classes') }}>
-                            <ArrowLeft size={16} /> Back to classes
-                        </button>
-                        <button className="refresh-button" onClick={logout}><LogOut size={16} /> Log out</button>
-                    </div>
-                </header>
+                <ExplorerHeader onHome={goHome} onAdmin={openAdmin} onLogout={logout}>
+                    <button className="refresh-button" onClick={() => { setSelectedClass(null); navigateTo('classes') }}>
+                        <ArrowLeft size={16} /> Back to classes
+                    </button>
+                </ExplorerHeader>
                 <section className="property-page">
                     <button className="back-link" onClick={() => { setSelectedClass(null); navigateTo('classes') }}>
                         <ArrowLeft size={16} /> Back to all classes
@@ -1407,32 +1431,29 @@ function App() {
 
     return (
         <main className="shell">
-            <header className="topbar">
-                <div className="brand"><span className="brand-mark">H</span><span>HEO <strong>Explorer</strong></span></div>
-                <div className="header-actions">
-                    <button className="refresh-button" onClick={() => { setShowDiagram(true); setDiagramMode('properties'); navigateTo('diagram') }}>
-                        Diagram
-                    </button>
-                    <button className="refresh-button" onClick={() => { setShowSparql(true); navigateTo('sparql') }}>
-                        SPARQL
-                    </button>
-                    <button className="refresh-button" onClick={() => { setShowTBox(true); navigateTo('tbox') }}>
-                        TBox
-                    </button>
-                    <button className="refresh-button" onClick={() => navigateTo('modules')}>
-                        Questions
-                    </button>
-                    <button className="refresh-button" onClick={() => { setShowGlobalInstances(true); setGlobalInstancePage(0); navigateTo('instances'); void loadGlobalInstances(0, globalInstancePageSize, globalInstanceSearch) }}>
-                        <Search size={16} /> Search all instances
-                    </button>
-                    <button className="refresh-button" onClick={() => void loadClasses()} disabled={loading}>
-                        <RefreshCw size={16} className={loading ? 'spin' : ''} /> Refresh
-                    </button>
-                    <button className="refresh-button" onClick={logout}>
-                        <LogOut size={16} /> Log out
-                    </button>
-                </div>
-            </header>
+            <ExplorerHeader onHome={goHome} onAdmin={openAdmin} onLogout={logout}>
+                <button className="refresh-button" onClick={() => { setShowDiagram(true); setDiagramMode('properties'); navigateTo('diagram') }}>
+                    Diagram
+                </button>
+                <button className="refresh-button" onClick={() => { setShowSparql(true); navigateTo('sparql') }}>
+                    SPARQL
+                </button>
+                <button className="refresh-button" onClick={() => { setShowTBox(true); navigateTo('tbox') }}>
+                    TBox
+                </button>
+                <button className="refresh-button" onClick={() => navigateTo('modules')}>
+                    Questions
+                </button>
+                <button className="refresh-button" onClick={() => navigateTo('module-annotation')}>
+                    Module Annotation
+                </button>
+                <button className="refresh-button" onClick={() => { setShowGlobalInstances(true); setGlobalInstancePage(0); navigateTo('instances'); void loadGlobalInstances(0, globalInstancePageSize, globalInstanceSearch) }}>
+                    <Search size={16} /> Search all instances
+                </button>
+                <button className="refresh-button" onClick={() => void loadClasses()} disabled={loading}>
+                    <RefreshCw size={16} className={loading ? 'spin' : ''} /> Refresh
+                </button>
+            </ExplorerHeader>
 
             <section className="hero">
                 <div>

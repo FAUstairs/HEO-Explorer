@@ -1,4 +1,6 @@
 import { authenticatedFetch } from './api'
+import AskQuestion from './AskQuestion'
+import QuestionSuggestions from './QuestionSuggestions'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
     moduleProgrammesQuery, programmeModuleNamesQuery, programmePortfoliosQuery, regulationCatalogueQuery,
@@ -111,10 +113,12 @@ type SortDirection = 'ascending' | 'descending'
 const nameOrder = new Intl.Collator('en')
 const pageSizes = [10, 20, 50, 100]
 
-export default function Questions({ endpoint, token }: { endpoint: string; token: string }) {
+export default function Questions({ endpoint, token, canManageSuggestions }: { endpoint: string; token: string; canManageSuggestions: boolean }) {
     return (
         <section className="property-page">
             <h1>Questions</h1>
+            <AskQuestion token={token} />
+            <h2 className="predefined-questions-heading">Predefined questions</h2>
             <ul className="question-list">
                 {questions.map((question) => <QuestionItem key={question.id} question={question} endpoint={endpoint} token={token} />)}
                 <AdvancedQuestion title="Which modules were added or removed between two examination regulations?">
@@ -124,6 +128,7 @@ export default function Questions({ endpoint, token }: { endpoint: string; token
                     <ProgrammeSimilarity endpoint={endpoint} token={token} />
                 </AdvancedQuestion>
             </ul>
+            <QuestionSuggestions token={token} canManageSuggestions={canManageSuggestions} />
         </section>
     )
 }

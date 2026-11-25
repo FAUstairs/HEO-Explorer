@@ -12,7 +12,7 @@ export default defineConfig(({ mode }) => {
     base,
     server: {
       proxy: {
-        [`^(?:${base.slice(0, -1)})?/api/(?:auth|notes|query|config)(?:[/?]|$)`]: {
+        [`^(?:${base.slice(0, -1)})?/api/(?:auth|admin|notes|query|config|questions)(?:[/?]|$)`]: {
           target: backendTarget,
           changeOrigin: true,
           rewrite: (path) => path.startsWith(base) ? path.slice(base.length - 1) : path,

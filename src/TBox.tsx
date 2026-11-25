@@ -1,5 +1,6 @@
+import ExplorerHeader from './ExplorerHeader'
 import { useEffect, useState } from 'react'
-import { AlertCircle, ArrowLeft, LoaderCircle, LogOut, RefreshCw } from 'lucide-react'
+import { AlertCircle, ArrowLeft, LoaderCircle, RefreshCw } from 'lucide-react'
 import { apiUrl, authenticatedFetch } from './api'
 import './tbox.css'
 
@@ -111,10 +112,11 @@ async function loadTriples(token: string): Promise<Triple[]> {
 type TBoxProps = {
   token: string
   onLogout: () => void
+  onAdmin?: () => void
   onBack?: () => void
 }
 
-export default function TBox({ token, onLogout, onBack }: TBoxProps): JSX.Element {
+export default function TBox({ token, onLogout, onAdmin, onBack }: TBoxProps): JSX.Element {
   const [triples, setTriples] = useState<Triple[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -181,16 +183,12 @@ export default function TBox({ token, onLogout, onBack }: TBoxProps): JSX.Elemen
 
   return (
     <main className="shell tbox-page">
-      <header className="topbar">
-        <div className="brand"><span className="brand-mark">H</span><span>HEO <strong>TBox</strong></span></div>
-        <div className="header-actions">
-          {onBack && <button className="refresh-button" onClick={onBack}><ArrowLeft size={16} /> Back to classes</button>}
-          <button className="refresh-button" onClick={() => void refresh()} disabled={loading}>
-            <RefreshCw size={16} className={loading ? 'spin' : ''} /> Refresh
-          </button>
-          <button className="refresh-button" onClick={onLogout}><LogOut size={16} /> Log out</button>
-        </div>
-      </header>
+      <ExplorerHeader onHome={onBack} onAdmin={onAdmin} onLogout={onLogout} title="TBox">
+        {onBack && <button className="refresh-button" onClick={onBack}><ArrowLeft size={16} /> Back to classes</button>}
+        <button className="refresh-button" onClick={() => void refresh()} disabled={loading}>
+          <RefreshCw size={16} className={loading ? 'spin' : ''} /> Refresh
+        </button>
+      </ExplorerHeader>
 
       <section className="property-page">
         <p className="eyebrow">Terminological box</p>

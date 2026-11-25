@@ -1,8 +1,9 @@
+import ExplorerHeader from './ExplorerHeader'
 import { authenticatedFetch } from './api'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import ELK from 'elkjs/lib/elk.bundled.js'
 import type { ElkNode } from 'elkjs/lib/elk-api.js'
-import { AlertCircle, ArrowLeft, LoaderCircle, LogOut, Minus, Plus, RefreshCw } from 'lucide-react'
+import { AlertCircle, ArrowLeft, LoaderCircle, Maximize, Minus, Plus, RefreshCw } from 'lucide-react'
 import type { HeoClass } from './App'
 
 type Binding = { value?: string; type?: string }
@@ -21,11 +22,29 @@ type LayoutPoint = { x: number; y: number; width: number; height: number }
 type LayoutSection = { startPoint: { x: number; y: number }; endPoint: { x: number; y: number }; bendPoints?: { x: number; y: number }[] }
 type LayoutLabel = { x?: number; y?: number; width?: number; height?: number }
 type LayoutEdge = { id: string; sections?: LayoutSection[]; labels?: LayoutLabel[] }
+type Size = { width: number; height: number }
+type Position = { x: number; y: number }
+type DiagramView = { zoom: number; pan: Position }
+const defaultView: DiagramView = { zoom: 1, pan: { x: 0, y: 0 } }
+const maxZoom = 2.5
+const viewportPadding = 5
+const controlsClearance = 50
+
+function fitDiagram(canvas: Size, viewport: Size) {
+    const top = Math.min(controlsClearance, viewport.height / 2)
+    const availableHeight = viewport.height - top
+    const zoom = Math.min(maxZoom, viewport.width / canvas.width, availableHeight / canvas.height)
+    return {
+        zoom,
+        pan: { x: (viewport.width - canvas.width * zoom) / 2, y: top + (availableHeight - canvas.height * zoom) / 2 },
+    }
+}
 
 type DiagramProps = {
     endpoint: string
     token: string
     onLogout: () => void
+    onAdmin?: () => void
     classes: HeoClass[]
     mode?: 'properties' | 'subclasses'
     onBack: () => void
@@ -94,28 +113,22 @@ function parseEdges(payload: unknown, mode: 'properties' | 'subclasses'): Diagra
     return [...unique.values()]
 }
 
-export default function Diagram({ endpoint, token, classes, mode = 'properties', onLogout, onBack, onOpenClass, onChangeMode }: DiagramProps) {
+export default function Diagram({ endpoint, token, classes, mode = 'properties', onLogout, onAdmin, onBack, onOpenClass, onChangeMode }: DiagramProps) {
     const [edges, setEdges] = useState<DiagramEdge[]>([])
     const [literalEdges, setLiteralEdges] = useState<DiagramEdge[]>([])
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState<string | null>(null)
-    const [zoom, setZoom] = useState(1)
-    const [pan, setPan] = useState({ x: 0, y: 0 })
+    const [manualViews, setManualViews] = useState<Record<'properties' | 'subclasses', DiagramView | null>>({
+        properties: null,
+        subclasses: null,
+    })
     const [hoveredEdge, setHoveredEdge] = useState<string | null>(null)
     const [hoveredClass, setHoveredClass] = useState<string | null>(null)
     const [selectedEdge, setSelectedEdge] = useState<string | null>(null)
     const [selectedClass, setSelectedClass] = useState<string | null>(null)
     const panStart = useRef<{ pointerX: number; pointerY: number; x: number; y: number } | null>(null)
-    const previousMode = useRef(mode)
     const diagramViewport = useRef<HTMLDivElement | null>(null)
-    const viewStateInitialized = useRef<Record<'properties' | 'subclasses', boolean>>({
-        properties: false,
-        subclasses: false,
-    })
-    const viewStateByMode = useRef<Record<'properties' | 'subclasses', { zoom: number; pan: { x: number; y: number } }>>({
-        properties: { zoom: 1, pan: { x: 0, y: 0 } },
-        subclasses: { zoom: 1, pan: { x: 0, y: 0 } },
-    })
+    const [viewportSize, setViewportSize] = useState<Size | null>(null)
 
     const loadDiagram = async () => {
         setLoading(true)
@@ -204,43 +217,50 @@ export default function Diagram({ endpoint, token, classes, mode = 'properties',
         })
         return () => { cancelled = true }
     }, [classes, visibleEdges])
-    useEffect(() => {
-        const modeChanged = previousMode.current !== mode
-        if (modeChanged) {
-            viewStateByMode.current[previousMode.current] = { zoom, pan }
-            previousMode.current = mode
-            if (viewStateInitialized.current[mode]) {
-                const nextState = viewStateByMode.current[mode]
-                setZoom(nextState.zoom)
-                setPan(nextState.pan)
-                setHoveredEdge(null)
-                setHoveredClass(null)
-                return
-            }
-            setLayout(null)
-            setHoveredEdge(null)
-            setHoveredClass(null)
-            return
-        }
-        if (!layout || viewStateInitialized.current[mode]) return
+    const diagramVisible = !loading && !error && layout !== null
+    useLayoutEffect(() => {
         const viewport = diagramViewport.current
-        if (!viewport) return
-        const availableWidth = viewport.clientWidth - 10
-        const availableHeight = viewport.clientHeight - 10
-        const fittedZoom = Math.max(.5, Math.min(2.5, availableWidth / layout.width, availableHeight / layout.height))
-        const fittedPan = {
-            x: (availableWidth - layout.width * fittedZoom) / 2,
-            y: (availableHeight - layout.height * fittedZoom) / 2,
+        if (!diagramVisible || !viewport) return
+        const measure = () => {
+            const width = viewport.clientWidth - viewportPadding * 2
+            const height = viewport.clientHeight - viewportPadding * 2
+            if (width > 0 && height > 0) setViewportSize({ width, height })
         }
-        setZoom(fittedZoom)
-        setPan(fittedPan)
-        viewStateByMode.current[mode] = { zoom: fittedZoom, pan: fittedPan }
-        viewStateInitialized.current[mode] = true
+        measure()
+        const observer = new ResizeObserver(measure)
+        observer.observe(viewport)
+        return () => observer.disconnect()
+    }, [diagramVisible])
+
+    const fittedView = useMemo(() => layout && viewportSize ? fitDiagram(layout, viewportSize) : null, [layout, viewportSize])
+    const minZoom = Math.min(.5, fittedView?.zoom ?? .5)
+    const { zoom, pan } = manualViews[mode] ?? fittedView ?? defaultView
+
+    function setManualView(view: DiagramView | null) {
+        setManualViews((current) => ({ ...current, [mode]: view }))
+    }
+
+    function zoomAt(factor: number, anchor: Position) {
+        const nextZoom = Math.max(minZoom, Math.min(maxZoom, zoom * factor))
+        if (nextZoom === zoom) return
+        const ratio = nextZoom / zoom
+        setManualView({
+            zoom: nextZoom,
+            pan: { x: anchor.x - (anchor.x - pan.x) * ratio, y: anchor.y - (anchor.y - pan.y) * ratio },
+        })
+    }
+
+    function zoomFromCentre(factor: number) {
+        if (viewportSize) zoomAt(factor, { x: viewportSize.width / 2, y: viewportSize.height / 2 })
+    }
+
+    useEffect(() => {
         setHoveredEdge(null)
         setHoveredClass(null)
         setSelectedEdge(null)
         setSelectedClass(null)
-    }, [layout, mode])
+    }, [mode])
+
     const canvasWidth = layout?.width ?? nodeWidth + padding * 2
     const canvasHeight = layout?.height ?? nodeHeight + padding * 2
     const literalPredicates = (classIri: string) => literalEdges
@@ -261,13 +281,9 @@ export default function Diagram({ endpoint, token, classes, mode = 'properties',
 
     return (
         <main className="shell diagram-shell">
-            <header className="topbar">
-                <div className="brand"><span className="brand-mark">H</span><span>HEO <strong>Explorer</strong></span></div>
-                <div className="header-actions">
-                    <button className="refresh-button" onClick={onBack}><ArrowLeft size={16} /> Back to classes</button>
-                    <button className="refresh-button" onClick={onLogout}><LogOut size={16} /> Log out</button>
-                </div>
-            </header>
+            <ExplorerHeader onHome={onBack} onAdmin={onAdmin} onLogout={onLogout}>
+                <button className="refresh-button" onClick={onBack}><ArrowLeft size={16} /> Back to classes</button>
+            </ExplorerHeader>
             <section className="property-page diagram-page">
                 <button className="back-link" onClick={onBack}><ArrowLeft size={16} /> Back to all classes</button>
                 <div className="diagram-heading">
@@ -286,9 +302,10 @@ export default function Diagram({ endpoint, token, classes, mode = 'properties',
                 {!loading && !error && !layout && <div className="loading"><LoaderCircle className="spin" size={28} /><span>Calculating graph layout …</span></div>}
                 {!loading && !error && layout && <div className="diagram-frame">
                     <div className="diagram-controls" aria-label="Diagram zoom controls">
-                        <button onClick={() => setZoom((current) => Math.max(.5, Math.round((current - .1) * 10) / 10))} disabled={zoom <= .5} aria-label="Zoom out"><Minus size={15} /></button>
-                        <button className="diagram-zoom-value" onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }) }} aria-label="Reset zoom">{Math.round(zoom * 100)}%</button>
-                        <button onClick={() => setZoom((current) => Math.min(2.5, Math.round((current + .1) * 10) / 10))} disabled={zoom >= 2.5} aria-label="Zoom in"><Plus size={15} /></button>
+                        <button onClick={() => zoomFromCentre(1 / 1.2)} disabled={zoom <= minZoom} aria-label="Zoom out"><Minus size={15} /></button>
+                        <button className="diagram-zoom-value" onClick={() => setManualView(defaultView)} aria-label="Reset zoom">{zoom < .01 ? '<1%' : `${Math.round(zoom * 100)}%`}</button>
+                        <button onClick={() => zoomFromCentre(1.2)} disabled={zoom >= maxZoom} aria-label="Zoom in"><Plus size={15} /></button>
+                        <button className="diagram-fit-button" onClick={() => setManualView(null)} disabled={!fittedView} aria-label="Fit entire diagram to screen" title="Fit entire diagram to screen"><Maximize size={15} /> Fit</button>
                     </div>
                     <div
                         ref={diagramViewport}
@@ -303,10 +320,11 @@ export default function Diagram({ endpoint, token, classes, mode = 'properties',
                             const start = panStart.current
                             if (!start) return
                             event.preventDefault()
-                            setPan({
-                                x: start.x + event.clientX - start.pointerX,
-                                y: start.y + event.clientY - start.pointerY,
-                            })
+                            const dx = event.clientX - start.pointerX
+                            const dy = event.clientY - start.pointerY
+                            if (dx !== 0 || dy !== 0 || manualViews[mode]) {
+                                setManualView({ zoom, pan: { x: start.x + dx, y: start.y + dy } })
+                            }
                         }}
                         onPointerUp={(event) => {
                             panStart.current = null
@@ -315,25 +333,17 @@ export default function Diagram({ endpoint, token, classes, mode = 'properties',
                         onPointerCancel={() => { panStart.current = null }}
                         onWheel={(event) => {
                             event.preventDefault()
-                            const nextZoom = Math.max(.5, Math.min(2.5, Math.round((zoom * Math.pow(.92, event.deltaY / 100)) * 10) / 10))
-                            if (nextZoom === zoom) return
-                            const bounds = event.currentTarget.getBoundingClientRect()
-                            const viewportX = event.clientX - bounds.left
-                            const viewportY = event.clientY - bounds.top
-                            const contentX = viewportX
-                            const contentY = viewportY
-                            const sceneX = (contentX - pan.x) / zoom
-                            const sceneY = (contentY - pan.y) / zoom
-                            setPan({
-                                x: contentX - sceneX * nextZoom,
-                                y: contentY - sceneY * nextZoom,
+                            const viewport = event.currentTarget
+                            const bounds = viewport.getBoundingClientRect()
+                            zoomAt(Math.pow(.92, event.deltaY / 100), {
+                                x: event.clientX - bounds.left - viewport.clientLeft - viewportPadding,
+                                y: event.clientY - bounds.top - viewport.clientTop - viewportPadding,
                             })
-                            setZoom(nextZoom)
                         }}
                     >
-                    <svg className="ontology-diagram" style={{ transform: `translate(${pan.x}px, ${pan.y}px)` }} width={canvasWidth * zoom} height={canvasHeight * zoom} viewBox={`0 0 ${canvasWidth} ${canvasHeight}`} role="img" aria-label="HEO class and predicate diagram">
+                    <svg className="ontology-diagram" style={{ transform: `translate(${pan.x}px, ${pan.y}px)`, visibility: fittedView ? undefined : 'hidden' }} width={canvasWidth * zoom} height={canvasHeight * zoom} viewBox={`0 0 ${canvasWidth} ${canvasHeight}`} role="img" aria-label="HEO class and predicate diagram">
                         <defs>
-                            <marker id="diagram-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#86a4bd" /></marker>
+                            <marker id="diagram-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="var(--diagram-edge, #86a4bd)" /></marker>
                         </defs>
                         {classes.map((item) => {
                             const point = position(item.iri)

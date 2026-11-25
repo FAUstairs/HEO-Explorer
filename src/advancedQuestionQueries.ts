@@ -80,3 +80,54 @@ SELECT (?module AS ?group) (${moduleName} AS ?label) ?regulation WHERE {
     ${moduleLabel}
 }
 GROUP BY ?module ?regulation`
+
+export const annotatedProgrammesQuery = `${prefix}
+SELECT ?programme (COALESCE(SAMPLE(STR(?programmeName)), STR(?programme)) AS ?programmeTitle)
+       (COUNT(DISTINCT ?module) AS ?annotatedModules) WHERE {
+    {
+        SELECT DISTINCT ?programme ?module WHERE {
+            ?programme a heo:CourseOfStudy .
+            ?regulation heo:definesProgram ?programme .
+            ?account heo:partOfModuleAccount*/heo:moduleAccountDefinedBy ?regulation .
+            ?entry heo:isInModuleAccount ?account ; heo:basedOnModule ?module .
+            ?module heo:teachingPromise ?competency .
+            ?competency a heo:Competency .
+        }
+    }
+    OPTIONAL { ?programme heo:programTitle ?programmeName . }
+}
+GROUP BY ?programme`
+
+export const programmeModuleTotalsQuery = (programmes: string[]) => `${prefix}
+SELECT ?programme (COUNT(DISTINCT ?module) AS ?totalModules) WHERE {
+    VALUES ?programme { ${programmes.map(iri).join(' ')} }
+    ?programme ^heo:definesProgram/^heo:moduleAccountDefinedBy/^heo:partOfModuleAccount* ?account .
+    ?entry heo:isInModuleAccount ?account ; heo:basedOnModule ?module .
+}
+GROUP BY ?programme`
+
+export const programmeModuleAccountsQuery = (programme: string) => `${prefix}
+SELECT ?regulation ?account ?parent ?module ?competency
+       (COALESCE(SAMPLE(STR(?code)), STR(?regulation)) AS ?regulationTitle)
+       (COALESCE(SAMPLE(STR(?accountName)), STR(?account)) AS ?accountTitle)
+       (${moduleName} AS ?moduleTitle)
+       (COALESCE(SAMPLE(STR(?competencyName)), STR(?competency)) AS ?competencyTitle) WHERE {
+    VALUES ?programme { ${iri(programme)} }
+    ?regulation heo:definesProgram ?programme .
+    OPTIONAL { ?regulation heo:regulationCode ?code . }
+    OPTIONAL {
+        ?account heo:partOfModuleAccount*/heo:moduleAccountDefinedBy ?regulation .
+        OPTIONAL { ?account heo:moduleAccountName ?accountName . }
+        OPTIONAL { ?account heo:partOfModuleAccount ?parent . }
+        OPTIONAL {
+            ?entry heo:isInModuleAccount ?account ; heo:basedOnModule ?module .
+            ${moduleLabel}
+            OPTIONAL {
+                ?module heo:teachingPromise ?competency .
+                ?competency a heo:Competency .
+                OPTIONAL { ?competency heo:competencyLabel ?competencyName . }
+            }
+        }
+    }
+}
+GROUP BY ?regulation ?account ?parent ?module ?competency`
