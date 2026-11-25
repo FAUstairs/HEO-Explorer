@@ -50,6 +50,7 @@ async function initializeDatabase() {
       ADD COLUMN IF NOT EXISTS display_name TEXT,
       ADD COLUMN IF NOT EXISTS email TEXT,
       ADD COLUMN IF NOT EXISTS rejected_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMPTZ,
       ADD COLUMN IF NOT EXISTS approved BOOLEAN NOT NULL DEFAULT TRUE;
     CREATE UNIQUE INDEX IF NOT EXISTS users_registration_email
       ON users (email) WHERE email IS NOT NULL;
@@ -113,12 +114,14 @@ async function authenticate(request: express.Request, response: express.Response
     return response.status(401).json({ error: 'Invalid or expired session.' })
   }
   const accountCreatedAt = typeof claims.accountCreatedAt === 'string' ? claims.accountCreatedAt : null
+  const passwordChangedAt = typeof claims.passwordChangedAt === 'string' ? claims.passwordChangedAt : null
   const result = await pool.query(`
     SELECT username, role FROM users
     WHERE username = $1 AND approved AND rejected_at IS NULL
       AND (EXTRACT(EPOCH FROM created_at)::text = $2
         OR ($2::text IS NULL AND created_at <= TO_TIMESTAMP($3::double precision)))
-  `, [claims.sub, accountCreatedAt, claims.iat])
+      AND EXTRACT(EPOCH FROM password_changed_at)::text IS NOT DISTINCT FROM $4::text
+  `, [claims.sub, accountCreatedAt, claims.iat, passwordChangedAt])
   if (!result.rowCount) return response.status(401).json({ error: 'Invalid or expired session.' })
   response.locals.account = result.rows[0]
   return next()
@@ -173,18 +176,46 @@ app.post('/api/auth/login', async (request, response) => {
   }
   const result = await pool.query(`
     SELECT username, password_hash, role, approved, rejected_at,
-      EXTRACT(EPOCH FROM created_at)::text AS account_created_at FROM users
+      EXTRACT(EPOCH FROM created_at)::text AS account_created_at,
+      EXTRACT(EPOCH FROM password_changed_at)::text AS password_changed_at FROM users
     WHERE username = $1 OR (email IS NOT NULL AND (username = $2 OR email = $2))
     ORDER BY (username = $1) DESC
     LIMIT 1
   `, [username, username.toLowerCase()])
   if (!result.rowCount || !(await bcrypt.compare(password, result.rows[0].password_hash))) return response.status(401).json({ error: 'Invalid credentials.' })
-  const user = result.rows[0] as { username: string; role: string; approved: boolean; rejected_at: Date | null; account_created_at: string }
+  const user = result.rows[0] as { username: string; role: string; approved: boolean; rejected_at: Date | null; account_created_at: string; password_changed_at: string | null }
   if (user.rejected_at) return response.status(403).json({ error: 'Your account request was declined.' })
   if (!user.approved) return response.status(403).json({ error: 'Your account is awaiting administrator approval.' })
   response.json({ token: jwt.sign({
-    sub: user.username, role: user.role, accountCreatedAt: user.account_created_at,
+    sub: user.username, role: user.role, accountCreatedAt: user.account_created_at, passwordChangedAt: user.password_changed_at,
   }, jwtSecret, { expiresIn: '8h' }) })
+})
+
+app.post('/api/auth/change-password', authenticate, async (request, response) => {
+  const { currentPassword, newPassword, passwordConfirmation } = request.body ?? {}
+  if (typeof currentPassword !== 'string' || !currentPassword) {
+    return response.status(400).json({ error: 'Enter your current password.' })
+  }
+  if (typeof newPassword !== 'string' || newPassword.length < 8 || Buffer.byteLength(newPassword, 'utf8') > 72) {
+    return response.status(400).json({ error: 'Use a password of at least 8 characters and at most 72 UTF-8 bytes.' })
+  }
+  if (newPassword !== passwordConfirmation) return response.status(400).json({ error: 'The new passwords do not match.' })
+  const username = response.locals.account.username
+  const { rows } = await pool.query('SELECT password_hash FROM users WHERE username = $1', [username])
+  const oldHash = rows[0]?.password_hash
+  if (!oldHash || !(await bcrypt.compare(currentPassword, oldHash))) {
+    return response.status(400).json({ error: 'The current password is incorrect.' })
+  }
+  if (await bcrypt.compare(newPassword, oldHash)) {
+    return response.status(400).json({ error: 'Choose a different password.' })
+  }
+  const newHash = await bcrypt.hash(newPassword, 12)
+  const result = await pool.query(`
+    UPDATE users SET password_hash = $1, password_changed_at = NOW()
+    WHERE username = $2 AND password_hash = $3 AND approved AND rejected_at IS NULL
+  `, [newHash, username, oldHash])
+  if (!result.rowCount) return response.status(409).json({ error: 'The account changed. Sign in again and retry.' })
+  return response.status(204).end()
 })
 
 app.get('/api/admin/registrations', authenticate, requireAdmin, async (request, response) => {
@@ -358,6 +389,18 @@ app.post('/api/notes', authenticate, async (request, response) => {
   if (!instanceIri?.trim() || !note?.trim()) return response.status(400).json({ error: 'instanceIri and note are required.' })
   const result = await pool.query('INSERT INTO heo_instance_notes (instance_iri, note) VALUES ($1, $2) RETURNING id, instance_iri, note, created_at, updated_at', [instanceIri, note.trim()])
   response.status(201).json(result.rows[0])
+})
+
+app.use('/api/auth/change-password', (error: unknown, _request: express.Request, response: express.Response, next: express.NextFunction) => {
+  if (response.headersSent) return next(error)
+  const status = (error as { status?: number } | null)?.status
+  if (status === 400 || status === 413) {
+    return response.status(status).json({ error: 'Invalid password change request.' })
+  }
+  // Database errors can include row details. Log only the error code.
+  const code = (error as { code?: unknown } | null)?.code
+  console.error('Password change failed', typeof code === 'string' && /^[A-Z0-9_]+$/.test(code) ? code : undefined)
+  return response.status(500).json({ error: 'The HEO API could not save the password (HTTP 500). Check the backend logs.' })
 })
 
 initializeDatabase()

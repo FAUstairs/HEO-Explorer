@@ -44,6 +44,7 @@ type DiagramProps = {
     endpoint: string
     token: string
     onLogout: () => void
+    onChangePassword: () => void
     onAdmin?: () => void
     classes: HeoClass[]
     mode?: 'properties' | 'subclasses'
@@ -113,7 +114,7 @@ function parseEdges(payload: unknown, mode: 'properties' | 'subclasses'): Diagra
     return [...unique.values()]
 }
 
-export default function Diagram({ endpoint, token, classes, mode = 'properties', onLogout, onAdmin, onBack, onOpenClass, onChangeMode }: DiagramProps) {
+export default function Diagram({ endpoint, token, classes, mode = 'properties', onLogout, onChangePassword, onAdmin, onBack, onOpenClass, onChangeMode }: DiagramProps) {
     const [edges, setEdges] = useState<DiagramEdge[]>([])
     const [literalEdges, setLiteralEdges] = useState<DiagramEdge[]>([])
     const [loading, setLoading] = useState(true)
@@ -281,7 +282,7 @@ export default function Diagram({ endpoint, token, classes, mode = 'properties',
 
     return (
         <main className="shell diagram-shell">
-            <ExplorerHeader onHome={onBack} onAdmin={onAdmin} onLogout={onLogout}>
+            <ExplorerHeader onHome={onBack} onAdmin={onAdmin} onLogout={onLogout} onChangePassword={onChangePassword}>
                 <button className="refresh-button" onClick={onBack}><ArrowLeft size={16} /> Back to classes</button>
             </ExplorerHeader>
             <section className="property-page diagram-page">

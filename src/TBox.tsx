@@ -112,11 +112,12 @@ async function loadTriples(token: string): Promise<Triple[]> {
 type TBoxProps = {
   token: string
   onLogout: () => void
+  onChangePassword: () => void
   onAdmin?: () => void
   onBack?: () => void
 }
 
-export default function TBox({ token, onLogout, onAdmin, onBack }: TBoxProps): JSX.Element {
+export default function TBox({ token, onLogout, onChangePassword, onAdmin, onBack }: TBoxProps): JSX.Element {
   const [triples, setTriples] = useState<Triple[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -183,7 +184,7 @@ export default function TBox({ token, onLogout, onAdmin, onBack }: TBoxProps): J
 
   return (
     <main className="shell tbox-page">
-      <ExplorerHeader onHome={onBack} onAdmin={onAdmin} onLogout={onLogout} title="TBox">
+      <ExplorerHeader onHome={onBack} onAdmin={onAdmin} onLogout={onLogout} onChangePassword={onChangePassword} title="TBox">
         {onBack && <button className="refresh-button" onClick={onBack}><ArrowLeft size={16} /> Back to classes</button>}
         <button className="refresh-button" onClick={() => void refresh()} disabled={loading}>
           <RefreshCw size={16} className={loading ? 'spin' : ''} /> Refresh

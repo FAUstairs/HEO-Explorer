@@ -78,6 +78,29 @@ Administrators can delete active and rejected accounts. The signed-in
 administrator and configured initial administrator are protected. Deleting an
 account ends its API sessions and anonymises its question suggestions.
 
+### Troubleshooting sign-in on the server
+
+If the browser receives an HTTP 503 for `/HEO-Explorer/api/auth/login`,
+check the API directly on the server. Use the configured API port if it
+differs from 3001:
+
+```bash
+curl -i -H 'Content-Type: application/json' --data '{}' \
+  http://127.0.0.1:3001/api/auth/login
+```
+
+The empty request should return HTTP 400 with a JSON message about missing
+credentials. A connection failure means the API is unreachable on that port.
+Check the API startup logs for missing environment variables, missing dependencies
+or a PostgreSQL connection or migration error. For deployments that use
+`heo-backend.env`, make sure the file exists on the server and contains
+`DATABASE_URL` and `JWT_SECRET`.
+
+If the API responds locally, send the same empty request to
+`http://127.0.0.1:5173/HEO-Explorer/api/auth/login`. A failure there points to
+the Vite server or its configured API target. If both local requests work,
+check the reverse proxy for the public `/HEO-Explorer/` path.
+
 ## Ontology endpoint
 
 The backend loads `heo-backend.env` from the project directory at startup when

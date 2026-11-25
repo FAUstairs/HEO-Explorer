@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { LogOut, Menu, Moon, Shield, Snowflake, Sun } from 'lucide-react'
+import { KeyRound, LogOut, Menu, Moon, Shield, Snowflake, Sun } from 'lucide-react'
 import { applyTheme, currentTheme } from './theme'
 import { isSnowEnabled, setSnowEnabled } from './Snowfall'
 
-export default function AccountMenu({ onAdmin, onLogout, mobileActions }: { onAdmin?: () => void; onLogout: () => void; mobileActions: ReactNode }) {
+export default function AccountMenu({ onAdmin, onLogout, onChangePassword, mobileActions }: { onAdmin?: () => void; onLogout: () => void; onChangePassword: () => void; mobileActions: ReactNode }) {
     const [snow, setSnow] = useState(isSnowEnabled)
     const [theme, setTheme] = useState(currentTheme)
     const nextTheme = theme === 'dark' ? 'light' : 'dark'
@@ -48,6 +48,7 @@ export default function AccountMenu({ onAdmin, onLogout, mobileActions }: { onAd
                     setSnowEnabled(!snow)
                     setSnow(!snow)
                 }}><Snowflake size={16} aria-hidden="true" /> Snow <span className="account-menu-state" aria-hidden="true">{snow ? 'On' : 'Off'}</span></button>
+                <button type="button" onClick={() => select(onChangePassword)}><KeyRound size={16} aria-hidden="true" /> Change password</button>
                 <button type="button" onClick={() => select(onLogout)}><LogOut size={16} aria-hidden="true" /> Log out</button>
             </div>
         </details>

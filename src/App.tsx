@@ -6,6 +6,7 @@ import Questions from './Questions'
 import ModuleAnnotation from './ModuleAnnotation'
 import AdminRegistrations from './AdminRegistrations'
 import Registration from './Registration'
+import ChangePassword from './ChangePassword'
 import ExplorerHeader from './ExplorerHeader'
 import { apiUrl, authenticatedFetch, sessionExpiry, watchRejectedSession } from './api'
 
@@ -146,10 +147,10 @@ function sparqlString(value: string): string {
     return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\r?\n/g, '\\n')}"`
 }
 
-type AuxiliaryView = 'modules' | 'admin' | 'module-annotation'
+type AuxiliaryView = 'modules' | 'admin' | 'module-annotation' | 'change-password'
 
 function isAuxiliaryView(view: string): view is AuxiliaryView {
-    return view === 'modules' || view === 'admin' || view === 'module-annotation'
+    return view === 'modules' || view === 'admin' || view === 'module-annotation' || view === 'change-password'
 }
 
 type AppView = 'classes' | 'class' | 'instance' | 'tbox' | 'instances' | 'diagram' | 'subclasses' | 'sparql' | AuxiliaryView
@@ -487,6 +488,7 @@ function App() {
     const [showTBox, setShowTBox] = useState(false)
     const [auxiliaryView, setAuxiliaryView] = useState<AuxiliaryView | null>(() => {
         if (window.location.pathname === appUrl('modules')) return 'modules'
+        if (window.location.pathname === appUrl('change-password')) return 'change-password'
         if (window.location.pathname === appUrl('admin')) return 'admin'
         if (window.location.pathname === appUrl('module-annotation')) return 'module-annotation'
         return null
@@ -522,6 +524,7 @@ function App() {
     const activeToken = useRef(token)
     const [registering, setRegistering] = useState(false)
     const [canManageUsers, setCanManageUsers] = useState(false)
+    const [loginNotice, setLoginNotice] = useState<string | null>(null)
     const [loginError, setLoginError] = useState<string | null>(null)
     const [loggingIn, setLoggingIn] = useState(false)
     const restoredUrl = useRef(false)
@@ -535,6 +538,7 @@ function App() {
     async function login(event: FormEvent<HTMLFormElement>) {
         event.preventDefault()
         setLoggingIn(true)
+        setLoginNotice(null)
         setLoginError(null)
         const form = new FormData(event.currentTarget)
         try {
@@ -543,8 +547,14 @@ function App() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ username: form.get('username'), password: form.get('password') }),
             })
-            const data = await response.json() as { token?: string; error?: string }
-            if (!response.ok || !data.token) throw new Error(data.error ?? 'Login failed.')
+            const data = await response.json().catch(() => null) as { token?: string; error?: string } | null
+            if (!response.ok) {
+                const fallback = [502, 503, 504].includes(response.status)
+                    ? `The HEO API is unavailable (HTTP ${response.status}).`
+                    : `Sign-in failed (HTTP ${response.status}).`
+                throw new Error(data?.error ?? fallback)
+            }
+            if (!data?.token) throw new Error('The HEO API returned an unexpected sign-in response.')
             localStorage.setItem('heo-admin-token', data.token)
             activeToken.current = data.token
             setToken(data.token)
@@ -980,6 +990,7 @@ function App() {
         return <main className="login-page"><form className="login-card" onSubmit={login}>
             <div className="brand"><span className="brand-mark">H</span><span>HEO <strong>Explorer</strong></span></div>
             <h1>Sign in</h1>
+            {loginNotice && <p role="status">{loginNotice}</p>}
             <label>Email or username<input name="username" autoComplete="username" required /></label>
             <label>Password<input name="password" type="password" autoComplete="current-password" required /></label>
             {loginError && <p className="login-error" role="alert">{loginError}</p>}
@@ -991,6 +1002,7 @@ function App() {
         </form></main>
     }
 
+    const openPasswordChange = () => navigateTo('change-password')
     const openAdmin = canManageUsers ? () => navigateTo('admin') : undefined
 
     async function executeSparql(event: FormEvent<HTMLFormElement>) {
@@ -1018,10 +1030,15 @@ function App() {
     if (auxiliaryView) {
         return (
             <main className="shell">
-                <ExplorerHeader onHome={goHome} onAdmin={openAdmin} onLogout={logout}>
+                <ExplorerHeader onHome={goHome} onAdmin={openAdmin} onLogout={logout} onChangePassword={openPasswordChange}>
                     <button className="refresh-button" onClick={goHome}><ArrowLeft size={16} /> Back to classes</button>
                 </ExplorerHeader>
-                {auxiliaryView === 'admin'
+                {auxiliaryView === 'change-password'
+                    ? <ChangePassword token={token} onChanged={() => {
+                        logout()
+                        setLoginNotice('Password changed. Sign in with your new password.')
+                    }} />
+                    : auxiliaryView === 'admin'
                     ? <AdminRegistrations token={token} />
                     : auxiliaryView === 'module-annotation'
                         ? <ModuleAnnotation endpoint={QUERY_ENDPOINT} token={token} />
@@ -1033,7 +1050,7 @@ function App() {
     if (showSparql) {
         return (
             <main className="shell">
-                <ExplorerHeader onHome={goHome} onAdmin={openAdmin} onLogout={logout}>
+                <ExplorerHeader onHome={goHome} onAdmin={openAdmin} onLogout={logout} onChangePassword={openPasswordChange}>
                     <button className="refresh-button" onClick={() => { setShowSparql(false); navigateTo('classes') }}><ArrowLeft size={16} /> Back to classes</button>
                 </ExplorerHeader>
                 <section className="property-page sparql-page">
@@ -1060,7 +1077,7 @@ function App() {
     }
 
     if (showTBox) {
-        return <TBox token={token} onBack={goHome} onLogout={logout} onAdmin={openAdmin} />
+        return <TBox token={token} onBack={goHome} onLogout={logout} onAdmin={openAdmin} onChangePassword={openPasswordChange} />
     }
 
     if (showDiagram) {
@@ -1069,6 +1086,7 @@ function App() {
             token={token}
             onLogout={logout}
             onAdmin={openAdmin}
+            onChangePassword={openPasswordChange}
             classes={heoClasses}
             mode={diagramMode}
             onBack={goHome}
@@ -1086,7 +1104,7 @@ function App() {
     if (showGlobalInstances) {
         return (
             <main className="shell">
-                <ExplorerHeader onHome={goHome} onAdmin={openAdmin} onLogout={logout}>
+                <ExplorerHeader onHome={goHome} onAdmin={openAdmin} onLogout={logout} onChangePassword={openPasswordChange}>
                     <button className="refresh-button" onClick={() => { setShowGlobalInstances(false); navigateTo('classes') }}><ArrowLeft size={16} /> Back to classes</button>
                 </ExplorerHeader>
                 <section className="property-page">
@@ -1175,7 +1193,7 @@ function App() {
         )
         return (
             <main className="shell">
-                <ExplorerHeader onHome={goHome} onAdmin={openAdmin} onLogout={logout}>
+                <ExplorerHeader onHome={goHome} onAdmin={openAdmin} onLogout={logout} onChangePassword={openPasswordChange}>
                     <button className="refresh-button" onClick={goBackFromInstance}><ArrowLeft size={16} /> Back</button>
                 </ExplorerHeader>
                 <section className="property-page">
@@ -1320,7 +1338,7 @@ function App() {
     if (selectedClass) {
         return (
             <main className="shell">
-                <ExplorerHeader onHome={goHome} onAdmin={openAdmin} onLogout={logout}>
+                <ExplorerHeader onHome={goHome} onAdmin={openAdmin} onLogout={logout} onChangePassword={openPasswordChange}>
                     <button className="refresh-button" onClick={() => { setSelectedClass(null); navigateTo('classes') }}>
                         <ArrowLeft size={16} /> Back to classes
                     </button>
@@ -1431,7 +1449,7 @@ function App() {
 
     return (
         <main className="shell">
-            <ExplorerHeader onHome={goHome} onAdmin={openAdmin} onLogout={logout}>
+            <ExplorerHeader onHome={goHome} onAdmin={openAdmin} onLogout={logout} onChangePassword={openPasswordChange}>
                 <button className="refresh-button" onClick={() => { setShowDiagram(true); setDiagramMode('properties'); navigateTo('diagram') }}>
                     Diagram
                 </button>
